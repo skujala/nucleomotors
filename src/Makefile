@@ -19,7 +19,7 @@
 
 OPENCM3_DIR=../libopencm3
 
-BINARY = blink
+BINARY = main
 
 LDSCRIPT = nucleo-f411re.ld
 
