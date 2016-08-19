@@ -41,14 +41,14 @@ static void rcc_clock_setup(void)
    * Do this before touching the PLL (TODO: why?).
    */
   rcc_set_hpre(RCC_CFGR_HPRE_DIV_NONE);
-  rcc_set_ppre1(RCC_CFGR_PPRE_DIV_4);
-  rcc_set_ppre2(RCC_CFGR_PPRE_DIV_2);
+  rcc_set_ppre1(RCC_CFGR_PPRE_DIV_2);
+  rcc_set_ppre2(RCC_CFGR_PPRE_DIV_NONE);
   
   rcc_set_main_pll_hse(
-      8 /* PLL_M */,
-    384 /* PLL_N */,
-     4 /* PLL_P */, 
-     2 /* PLL_Q */
+      8, /* PLL_M */
+    384, /* PLL_N */
+      4, /* PLL_P */ 
+      2  /* PLL_Q */
   );
   
   /* Enable PLL oscillator and wait for it to stabilize. */
@@ -56,7 +56,7 @@ static void rcc_clock_setup(void)
   rcc_wait_for_osc_ready(RCC_PLL);
   
   /* Configure flash settings. */
-  flash_set_ws(FLASH_ACR_ICE | FLASH_ACR_DCE | FLASH_ACR_PRFTEN | FLASH_ACR_LATENCY_3WS);
+  flash_set_ws(FLASH_ACR_ICE | FLASH_ACR_DCE | FLASH_ACR_LATENCY_3WS);
   
   /* Select PLL as SYSCLK source. */
   rcc_set_sysclk_source(RCC_CFGR_SW_PLL);
@@ -66,8 +66,8 @@ static void rcc_clock_setup(void)
   
   /* Set the peripheral clock frequencies used. */
   rcc_ahb_frequency  = 96000000;
-  rcc_apb1_frequency = 24000000;
-  rcc_apb2_frequency = 48000000;
+  rcc_apb1_frequency = 48000000;
+  rcc_apb2_frequency = 96000000;
   
   /* Disable internal high-speed oscillator. */
   rcc_osc_off(RCC_HSI);
@@ -75,8 +75,6 @@ static void rcc_clock_setup(void)
 
 static void rcc_setup(void)
 {
-  /* rcc_clock_setup_hse_3v3(&rcc_hse_8mhz_3v3[RCC_CLOCK_3V3_84MHZ]); */
-  
   rcc_clock_setup();
 
   /* Enable GPIOD clock for LED & USARTs. */
@@ -90,7 +88,7 @@ static void rcc_setup(void)
   /* Enable timers for PWM */
   rcc_periph_clock_enable(RCC_TIM2);
   rcc_periph_clock_enable(RCC_TIM3);
-  
+    
   rcc_periph_clock_enable(RCC_SPI1);
 }
 
@@ -109,13 +107,7 @@ static void usart_setup(void)
 }
 
 static void gpio_setup(void)
-{
-  /*** ONBOARD LED ***/
-  
-  /* Setup GPIO pin GPIO5 on GPIO port A for LED. */
-  gpio_mode_setup(GPIOA, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, GPIO5);
-
-
+{ 
   /*** L6474 DIRECTION PINS for X-NUCLEO-IHM01A1 ***/
   gpio_mode_setup(GPIOA, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, GPIO8);
   gpio_mode_setup(GPIOB, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, GPIO5);
@@ -141,10 +133,10 @@ static void gpio_setup(void)
   gpio_mode_setup(GPIOB, GPIO_MODE_AF, GPIO_PUPD_NONE, GPIO3);
   gpio_set_af(GPIOB, GPIO_AF1, GPIO3);
   
-  gpio_mode_setup(GPIOC, GPIO_MODE_AF, GPIO_PUPD_NONE, GPIO6);
-  gpio_set_af(GPIOC, GPIO_AF3, GPIO6);
-  
-  
+  gpio_mode_setup(GPIOC, GPIO_MODE_AF, GPIO_PUPD_NONE, GPIO7);
+  gpio_set_af(GPIOC, GPIO_AF2, GPIO7);
+    
+    
   /*** SPI1 ***/
 
   /* CS */
@@ -154,12 +146,6 @@ static void gpio_setup(void)
   gpio_mode_setup(GPIOA, GPIO_MODE_AF, GPIO_PUPD_NONE, GPIO5 | GPIO6 | GPIO7);
   gpio_set_af(GPIOA, GPIO_AF5, GPIO5 | GPIO6 | GPIO7);
   
-  /* 
-    Not sure if this is really needed -- copied from libopencm3-example, e.g., why only
-    SPI1_SCK and SPI1_MOSI are set, and SPI1_MISO is left at default? - probably as MISO is
-    input...
-  */
-  gpio_set_output_options(GPIOA, GPIO_OTYPE_PP, GPIO_OSPEED_25MHZ, GPIO5 | GPIO7);
 }
 
 static void tim2_setup(void)
@@ -168,41 +154,52 @@ static void tim2_setup(void)
   timer_set_mode(TIM2, TIM_CR1_CKD_CK_INT,
                  TIM_CR1_CMS_EDGE, TIM_CR1_DIR_UP);
 
-  timer_set_prescaler(TIM2, 9600));
+  timer_set_prescaler(TIM2, 1);
   timer_enable_preload(TIM2);
   
   timer_continuous_mode(TIM2);
 
-  timer_set_period(TIM2, 65536);
+  timer_set_period(TIM2, 0x200000 << 2);
   
   timer_set_oc_mode(TIM2, TIM_OC2, TIM_OCM_PWM1);
   timer_enable_oc_preload(TIM2, TIM_OC2);
   timer_enable_oc_output(TIM2, TIM_OC2);
-  timer_set_oc_value(TIM2, TIM_OC2, 32768);
+  timer_set_oc_value(TIM2, TIM_OC2, 0x100000 << 2);
+    
+  timer_set_counter(TIM2, 0x00000000);
+  /* Update PSC values from shadow registers so that changes take place */
+  timer_generate_event(TIM2, TIM_EGR_UG);
 }
 
 static void tim3_setup(void)
 {
   timer_reset(TIM3);
   timer_set_mode(TIM3, TIM_CR1_CKD_CK_INT,
-                  TIM_CR1_CMS_EDGE, TIM_CR1_DIR_UP);
-                 
-  timer_set_period(TIM3, 65536);
-  timer_set_prescaler(TIM3, 2);
- 
+                 TIM_CR1_CMS_EDGE, TIM_CR1_DIR_UP);
+
+  timer_set_prescaler(TIM3, 95);
+  timer_enable_preload(TIM3);
+  
+  timer_continuous_mode(TIM3);
+
+  timer_set_period(TIM3, 65535);
+  
   timer_set_oc_mode(TIM3, TIM_OC2, TIM_OCM_PWM1);
   timer_enable_oc_preload(TIM3, TIM_OC2);
   timer_enable_oc_output(TIM3, TIM_OC2);
-  timer_set_oc_value(TIM3, TIM_OC2, 32768);
+  timer_set_oc_value(TIM3, TIM_OC2, 0xFF);
 
-  timer_enable_preload(TIM3);
+  timer_set_counter(TIM3, 0x0000);
+
+  /* Update PSC values from shadow registers so that changes take place */
+  timer_generate_event(TIM3, TIM_EGR_UG);
 }
 
 
 static void spi_setup(void)
 {
   /* 
-    L6474 SPI CLOCK frequency max 5 MHz -> SPI1 runs from APB2 bus (rate 48) MHz -> need to divide by 16,
+    L6474 SPI CLOCK frequency max 5 MHz -> SPI1 runs from APB2 bus (rate 96) MHz -> need to divide by 32,
     resulting in 3 MHz clock frequency. Probably acceptable.
   */
   spi_set_baudrate_prescaler(SPI1, SPI_CR1_BR_FPCLK_DIV_16);
@@ -227,7 +224,7 @@ static void spi_setup(void)
   
 }
 
-void l6474_message(uint8_t *msg_tx, uint8_t *msg_rx, uint8_t msg_len)
+static void l6474_message(uint8_t *msg_tx, uint8_t *msg_rx, uint8_t msg_len)
 {
   uint8_t i;
   
@@ -260,27 +257,14 @@ int main(void)
   spi_setup();
   tim2_setup();
   tim3_setup();
-      
-  usart_send_blocking(USART2, '1');
-  
-  uint8_t message[] = {0xB8, 0xB8};
-  
-  l6474_message(message, NULL, 2);
-    
-  usart_send_blocking(USART2, '2');
-  
-  /* motor should run opposite directions */
-  gpio_set(GPIOA, GPIO8);
-  gpio_set(GPIOB, GPIO5);
-  
-  usart_send_blocking(USART2, '3');
-  timer_enable_counter(TIM2);  
-  timer_enable_counter(TIM3);  
 
-  TIM2_CCR2 = 32768;
+  uint8_t message[] = {0xB8, 0xB8, 0x00};
   
-  usart_send_blocking(USART2, '4');
-  
+  timer_enable_counter(TIM2);
+  timer_enable_counter(TIM3);  
   
   while(1);
+  {
+    __WFI();
+  }
 }
