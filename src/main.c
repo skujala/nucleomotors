@@ -1,8 +1,10 @@
 /*
  * Copyright (C) 2016 Sami Kujala <skujala@iki.fi>
  *
+ * This is work in progress.
  */
 
+#include <libopencmsis/core_cm3.h>
 #include <libopencm3/stm32/rcc.h>
 #include <libopencm3/stm32/pwr.h>
 #include <libopencm3/stm32/flash.h>
@@ -17,11 +19,14 @@
 
 static void nvic_setup(void)
 {
+  /* Placeholder only */
 
 }
 
 static void rcc_clock_setup(void)
 {
+  /* Modified from libopencm3 library function rcc_clock_setup_hse_3v3. Could be refactored. */
+  
   /* Enable internal high-speed oscillator. */
   rcc_osc_on(RCC_HSI);
   rcc_wait_for_osc_ready(RCC_HSI);
@@ -148,6 +153,8 @@ static void gpio_setup(void)
   
 }
 
+
+/* Combining the two functions below would be a useful DRY refactor */
 static void tim2_setup(void)
 {
   timer_reset(TIM2);
@@ -164,10 +171,17 @@ static void tim2_setup(void)
   timer_set_oc_mode(TIM2, TIM_OC2, TIM_OCM_PWM1);
   timer_enable_oc_preload(TIM2, TIM_OC2);
   timer_enable_oc_output(TIM2, TIM_OC2);
-  timer_set_oc_value(TIM2, TIM_OC2, 0x100000 << 2);
+  timer_set_oc_value(TIM2, TIM_OC2, 0x10000);
     
   timer_set_counter(TIM2, 0x00000000);
-  /* Update PSC values from shadow registers so that changes take place */
+  
+  /* Reference manual for STM32F411 states:
+
+    As the preload registers are transferred to the shadow registers only when an update event
+    occurs, before starting the counter, you have to initialize all the registers by setting
+    the UG bit in the TIMx_EGR register.
+
+   */
   timer_generate_event(TIM2, TIM_EGR_UG);
 }
 
@@ -191,7 +205,13 @@ static void tim3_setup(void)
 
   timer_set_counter(TIM3, 0x0000);
 
-  /* Update PSC values from shadow registers so that changes take place */
+  /* Reference manual for STM32F411 states:
+
+    As the preload registers are transferred to the shadow registers only when an update event
+    occurs, before starting the counter, you have to initialize all the registers by setting
+    the UG bit in the TIMx_EGR register.
+
+   */
   timer_generate_event(TIM3, TIM_EGR_UG);
 }
 
@@ -259,6 +279,8 @@ int main(void)
   tim3_setup();
 
   uint8_t message[] = {0xB8, 0xB8, 0x00};
+  
+  l6474_message(message, NULL, 3);
   
   timer_enable_counter(TIM2);
   timer_enable_counter(TIM3);  
