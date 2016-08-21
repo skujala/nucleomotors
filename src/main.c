@@ -166,12 +166,12 @@ static void tim2_setup(void)
   
   timer_continuous_mode(TIM2);
 
-  timer_set_period(TIM2, 0x1000);
+  timer_set_period(TIM2, 0x40000);
   
   timer_set_oc_mode(TIM2, TIM_OC2, TIM_OCM_PWM1);
   timer_enable_oc_preload(TIM2, TIM_OC2);
   timer_enable_oc_output(TIM2, TIM_OC2);
-  timer_set_oc_value(TIM2, TIM_OC2, 0x800);
+  timer_set_oc_value(TIM2, TIM_OC2, 0x20000);
     
   timer_set_counter(TIM2, 0x00000000);
   
@@ -275,8 +275,23 @@ int main(void)
   tim2_setup();
   tim3_setup();
 
+  uint32_t speeds[] = {
+    0x40000, 0x3eeea, 0x3ddd4, 0x3ccbe, 0x3bba9,
+           0x3aa93, 0x3997d, 0x38868, 0x37752, 0x3663c,
+           0x35527, 0x34411, 0x332fb, 0x321e5, 0x310d0,
+           0x2ffba, 0x2eea4, 0x2dd8f, 0x2cc79, 0x2bb63,
+           0x2aa4e, 0x29938, 0x28822, 0x2770d, 0x265f7,
+           0x254e1, 0x243cb, 0x232b6, 0x221a0, 0x2108a,
+           0x1ff75, 0x1ee5f, 0x1dd49, 0x1cc34, 0x1bb1e,
+           0x1aa08, 0x198f2, 0x187dd, 0x176c7, 0x165b1,
+           0x1549c, 0x14386, 0x13270, 0x1215b, 0x11045,
+           0xff2f, 0xee1a, 0xdd04, 0xcbee, 0xbad8, 0xa9c3,
+           0x98ad, 0x8797, 0x7682, 0x656c, 0x5456, 0x4341,
+           0x322b, 0x2115, 0x1000
+  };
+
   /* ------------------- TOP - BOT -- */
-  uint8_t message1[] = {0xB8, 0xB8};
+  uint8_t message1[] = {0xB8, 0x00};
 
   uint8_t reply[3];
   
@@ -292,10 +307,42 @@ int main(void)
   gpio_set(GPIOB, GPIO5);
     
   timer_enable_counter(TIM2); // TOP
-  timer_enable_counter(TIM3); // BOT
+  //timer_enable_counter(TIM3); // BOT
   
-  while(1);
+
+  
+  while(1)
   {
-    __WFI();
+    for (uint8_t j = 0; j < 60; j++){
+      timer_set_period(TIM2, speeds[j]);
+      timer_set_oc_value(TIM2, TIM_OC2, speeds[j] >> 1);
+      timer_generate_event(TIM2, TIM_EGR_UG);
+    
+      for (uint32_t i = 0; i < 8000000; i++){
+        asm("nop");
+      }      
+    }
+
+    for (uint32_t i = 0; i < 0x2000000; i++){
+      asm("nop");
+    }      
+
+    for (uint8_t j = 59; j > 0; j--){
+      timer_set_period(TIM2, speeds[j]);
+      timer_set_oc_value(TIM2, TIM_OC2, speeds[j] >> 1);
+      timer_generate_event(TIM2, TIM_EGR_UG);
+    
+      for (uint32_t i = 0; i < 8000000; i++){
+        asm("nop");
+      }      
+    }
+    
+    for (uint32_t i = 0; i < 0x2000000; i++){
+      asm("nop");
+    }      
+    
+    gpio_toggle(GPIOB, GPIO5);
+    
+
   }
 }
