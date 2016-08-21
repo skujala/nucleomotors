@@ -166,12 +166,12 @@ static void tim2_setup(void)
   
   timer_continuous_mode(TIM2);
 
-  timer_set_period(TIM2, 0x200000 << 2);
+  timer_set_period(TIM2, 0x1000);
   
   timer_set_oc_mode(TIM2, TIM_OC2, TIM_OCM_PWM1);
   timer_enable_oc_preload(TIM2, TIM_OC2);
   timer_enable_oc_output(TIM2, TIM_OC2);
-  timer_set_oc_value(TIM2, TIM_OC2, 0x10000);
+  timer_set_oc_value(TIM2, TIM_OC2, 0x800);
     
   timer_set_counter(TIM2, 0x00000000);
   
@@ -191,17 +191,17 @@ static void tim3_setup(void)
   timer_set_mode(TIM3, TIM_CR1_CKD_CK_INT,
                  TIM_CR1_CMS_EDGE, TIM_CR1_DIR_UP);
 
-  timer_set_prescaler(TIM3, 95);
+  timer_set_prescaler(TIM3, 1);
   timer_enable_preload(TIM3);
   
   timer_continuous_mode(TIM3);
 
-  timer_set_period(TIM3, 65535);
+  timer_set_period(TIM3, 0x1000);
   
   timer_set_oc_mode(TIM3, TIM_OC2, TIM_OCM_PWM1);
   timer_enable_oc_preload(TIM3, TIM_OC2);
   timer_enable_oc_output(TIM3, TIM_OC2);
-  timer_set_oc_value(TIM3, TIM_OC2, 0xFF);
+  timer_set_oc_value(TIM3, TIM_OC2, 0x800);
 
   timer_set_counter(TIM3, 0x0000);
 
@@ -233,9 +233,6 @@ static void spi_setup(void)
   spi_set_nss_high(SPI1);
 
   spi_set_master_mode(SPI1);
-
-  spi_enable_software_slave_management(SPI1);
-  spi_set_nss_high(SPI1);
 
   spi_enable(SPI1);
     
@@ -278,12 +275,24 @@ int main(void)
   tim2_setup();
   tim3_setup();
 
-  uint8_t message[] = {0xB8, 0xB8, 0x00};
+  /* ------------------- TOP - BOT -- */
+  uint8_t message1[] = {0xB8, 0xB8};
+
+  uint8_t reply[3];
   
-  l6474_message(message, NULL, 3);
+  gpio_set(GPIOA, GPIO9);
   
-  timer_enable_counter(TIM2);
-  timer_enable_counter(TIM3);  
+  for (uint32_t i = 0; i < 100000; i++){
+    asm("nop");
+  }
+  
+  l6474_message(message1, reply, 2);
+  
+  gpio_clear(GPIOA, GPIO8);
+  gpio_set(GPIOB, GPIO5);
+    
+  timer_enable_counter(TIM2); // TOP
+  timer_enable_counter(TIM3); // BOT
   
   while(1);
   {
