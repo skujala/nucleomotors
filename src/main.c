@@ -5,6 +5,7 @@
  */
 
 #include <libopencmsis/core_cm3.h>
+#include <libopencm3/cm3/systick.h>
 #include <libopencm3/stm32/rcc.h>
 #include <libopencm3/stm32/pwr.h>
 #include <libopencm3/stm32/flash.h>
@@ -17,10 +18,26 @@
 
 #include <stdlib.h>
 
+static volatile uint32_t m1_target_speed; /* Units steps/sec */
+static uint16_t speed_step = 1; /* Acceleration 1000 steps/sec^2 */
+
+
+typedef enum {
+  STATE_ACCELERATING,
+  STATE_DECELERATING,
+  STATE_STEADYSTATE,
+  STATE_STOPPED
+} motor_state_t;
+
+volatile motor_state_t motor1_state;
+volatile motor_state_t motor2_state;
+
+
+static volatile uint32_t system_millis;
+
 static void nvic_setup(void)
 {
-  /* Placeholder only */
-
+  
 }
 
 static void rcc_clock_setup(void)
@@ -90,11 +107,19 @@ static void rcc_setup(void)
   /* Enable clocks for USART2. */
   rcc_periph_clock_enable(RCC_USART2);
 
-  /* Enable timers for PWM */
+  /* Enable timers for PWM and timing */
   rcc_periph_clock_enable(RCC_TIM2);
   rcc_periph_clock_enable(RCC_TIM3);
     
   rcc_periph_clock_enable(RCC_SPI1);
+  
+  /* 1 ms systick interrupt rate */
+  systick_set_reload(96000);
+  
+  systick_set_clocksource(STK_CSR_CLKSOURCE_AHB);
+  systick_counter_enable();
+
+  systick_interrupt_enable();
 }
 
 static void usart_setup(void)
@@ -166,12 +191,12 @@ static void tim2_setup(void)
   
   timer_continuous_mode(TIM2);
 
-  timer_set_period(TIM2, 0x40000);
+  timer_set_period(TIM2, 0x10000);
   
   timer_set_oc_mode(TIM2, TIM_OC2, TIM_OCM_PWM1);
   timer_enable_oc_preload(TIM2, TIM_OC2);
   timer_enable_oc_output(TIM2, TIM_OC2);
-  timer_set_oc_value(TIM2, TIM_OC2, 0x20000);
+  timer_set_oc_value(TIM2, TIM_OC2, 0x8000);
     
   timer_set_counter(TIM2, 0x00000000);
   
@@ -216,6 +241,9 @@ static void tim3_setup(void)
 }
 
 
+
+
+
 static void spi_setup(void)
 {
   /* 
@@ -240,6 +268,56 @@ static void spi_setup(void)
   gpio_set(GPIOB, GPIO6);
   
 }
+
+/* Called when systick fires */
+void sys_tick_handler(void)
+{
+  system_millis++;
+  
+  motor_state_t next_state;
+  
+  
+  uint32_t m1_current_speed = TIM2_ARR;
+  uint32_t m1_new_speed = m1_current_speed;
+  
+  switch(motor1_state) {
+    case STATE_ACCELERATING:
+      m1_new_speed -= speed_step;
+      
+      if (m1_new_speed < m1_target_speed) {
+        m1_new_speed = m1_target_speed;
+        next_state = STATE_STEADYSTATE;
+      } else {
+        next_state = STATE_ACCELERATING;
+      }
+      break;
+    case STATE_DECELERATING:
+      m1_new_speed += speed_step;
+    
+      if (m1_new_speed > m1_target_speed) {
+        m1_new_speed = m1_target_speed;
+        next_state = STATE_STEADYSTATE;
+      } else {
+        next_state = STATE_DECELERATING;
+      }
+      break;
+    case STATE_STEADYSTATE:
+    case STATE_STOPPED:
+    default:
+      next_state = motor1_state;
+      break;
+  }
+  
+  if (m1_current_speed != m1_target_speed) {
+    timer_set_period(TIM2, m1_new_speed);
+    timer_set_oc_value(TIM2, TIM_OC2, m1_new_speed >> 1);
+    timer_generate_event(TIM2, TIM_EGR_UG);
+  }
+  
+  motor1_state = next_state;
+}
+
+
 
 static void l6474_message(uint8_t *msg_tx, uint8_t *msg_rx, uint8_t msg_len)
 {
@@ -273,14 +351,7 @@ int main(void)
   usart_setup();
   spi_setup();
   tim2_setup();
-  tim3_setup();
-
-  uint32_t start_speed = 0x8000;
-  uint32_t end_speed = 0xB80;
-  uint16_t accel_steps = 2048;
-  uint32_t current_speed;
-  
-  
+  tim3_setup();  
 
   /* ------------------- TOP - BOT -- */
   uint8_t message1[] = {0xB8, 0xb8};
@@ -301,41 +372,14 @@ int main(void)
   timer_enable_counter(TIM2); // TOP
   timer_enable_counter(TIM3); // BOT
   
-
+  cm_disable_interrupts();
+  m1_target_speed = 0x1000;
+  motor1_state = STATE_ACCELERATING;
+  cm_enable_interrupts();
+  
   
   while(1)
   {
-    for (uint16_t step = 0; step < accel_steps; step++) {
-      current_speed = start_speed-step*(start_speed-end_speed)/(accel_steps-1);
-      
-      timer_set_period(TIM2, current_speed);
-      timer_set_oc_value(TIM2, TIM_OC2, current_speed >> 1);
-      timer_generate_event(TIM2, TIM_EGR_UG);
-    
-      for (uint32_t i = 0; i < 20000; i++){
-        asm("nop");
-      }      
-    }
-
-    for (uint32_t i = 0; i < 0x2000000; i++){
-      asm("nop");
-    }      
-
-    for (uint16_t step = 0; step < accel_steps; step++) {
-      current_speed = end_speed+step*(start_speed-end_speed)/(accel_steps-1);
-      
-      timer_set_period(TIM2, current_speed);
-      timer_set_oc_value(TIM2, TIM_OC2, current_speed >> 1);
-      timer_generate_event(TIM2, TIM_EGR_UG);
-    
-      for (uint32_t i = 0; i < 20000; i++){
-        asm("nop");
-      }      
-    }
-    
-    for (uint32_t i = 0; i < 0x2000000; i++){
-      asm("nop");
-    }          
-
+    __WFI();
   }
 }
