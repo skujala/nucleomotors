@@ -18,8 +18,8 @@
 
 #include <stdlib.h>
 
-static volatile uint32_t m1_target_speed; /* Units steps/sec */
-static uint16_t speed_step = 1; /* Acceleration 1000 steps/sec^2 */
+static volatile uint32_t m1_target_period; /* Units steps/sec */
+static uint32_t period_step = 10; /* Acceleration 1000 steps/sec^2 */
 
 
 typedef enum {
@@ -44,14 +44,14 @@ static void rcc_clock_setup(void)
 {
   /* Modified from libopencm3 library function rcc_clock_setup_hse_3v3. Could be refactored. */
   
-  /* Enable internal high-speed oscillator. */
+  /* Enable internal high-period oscillator. */
   rcc_osc_on(RCC_HSI);
   rcc_wait_for_osc_ready(RCC_HSI);
   
   /* Select HSI as SYSCLK source. */
   rcc_set_sysclk_source(RCC_CFGR_SW_HSI);
   
-  /* Enable external high-speed oscillator 8MHz. */
+  /* Enable external high-period oscillator 8MHz. */
   rcc_osc_on(RCC_HSE);
   rcc_wait_for_osc_ready(RCC_HSE);
   
@@ -91,7 +91,7 @@ static void rcc_clock_setup(void)
   rcc_apb1_frequency = 48000000;
   rcc_apb2_frequency = 96000000;
   
-  /* Disable internal high-speed oscillator. */
+  /* Disable internal high-period oscillator. */
   rcc_osc_off(RCC_HSI);
 }
 
@@ -113,12 +113,13 @@ static void rcc_setup(void)
     
   rcc_periph_clock_enable(RCC_SPI1);
   
-  /* 1 ms systick interrupt rate */
-  systick_set_reload(96000);
+  /* 10 ms systick interrupt rate */
+  systick_set_reload(960000);
   
   systick_set_clocksource(STK_CSR_CLKSOURCE_AHB);
   systick_counter_enable();
 
+  motor1_state = STATE_STEADYSTATE;
   systick_interrupt_enable();
 }
 
@@ -191,12 +192,12 @@ static void tim2_setup(void)
   
   timer_continuous_mode(TIM2);
 
-  timer_set_period(TIM2, 0x10000);
+  timer_set_period(TIM2, 0xFFFF);
   
   timer_set_oc_mode(TIM2, TIM_OC2, TIM_OCM_PWM1);
   timer_enable_oc_preload(TIM2, TIM_OC2);
   timer_enable_oc_output(TIM2, TIM_OC2);
-  timer_set_oc_value(TIM2, TIM_OC2, 0x8000);
+  timer_set_oc_value(TIM2, TIM_OC2, 0xFFFF >> 1);
     
   timer_set_counter(TIM2, 0x00000000);
   
@@ -277,25 +278,25 @@ void sys_tick_handler(void)
   motor_state_t next_state;
   
   
-  uint32_t m1_current_speed = TIM2_ARR;
-  uint32_t m1_new_speed = m1_current_speed;
-  
+  uint32_t m1_current_period = TIM2_ARR;
+  uint32_t m1_new_period = m1_current_period;
+    
   switch(motor1_state) {
     case STATE_ACCELERATING:
-      m1_new_speed -= speed_step;
+      m1_new_period = m1_current_period * (1 - m1_current_period / 1000000.);
       
-      if (m1_new_speed < m1_target_speed) {
-        m1_new_speed = m1_target_speed;
+      if (m1_new_period < m1_target_period) {
+        m1_new_period = m1_target_period;
         next_state = STATE_STEADYSTATE;
       } else {
         next_state = STATE_ACCELERATING;
       }
       break;
     case STATE_DECELERATING:
-      m1_new_speed += speed_step;
-    
-      if (m1_new_speed > m1_target_speed) {
-        m1_new_speed = m1_target_speed;
+      m1_new_period = m1_current_period * (1 + m1_current_period / 1000000.);
+      
+      if (m1_new_period > m1_target_period) {
+        m1_new_period = m1_target_period;
         next_state = STATE_STEADYSTATE;
       } else {
         next_state = STATE_DECELERATING;
@@ -308,9 +309,9 @@ void sys_tick_handler(void)
       break;
   }
   
-  if (m1_current_speed != m1_target_speed) {
-    timer_set_period(TIM2, m1_new_speed);
-    timer_set_oc_value(TIM2, TIM_OC2, m1_new_speed >> 1);
+  if (m1_current_period != m1_target_period) {
+    timer_set_period(TIM2, m1_new_period);
+    timer_set_oc_value(TIM2, TIM_OC2, m1_new_period >> 1);
     timer_generate_event(TIM2, TIM_EGR_UG);
   }
   
@@ -354,7 +355,7 @@ int main(void)
   tim3_setup();  
 
   /* ------------------- TOP - BOT -- */
-  uint8_t message1[] = {0xB8, 0xb8};
+  uint8_t message1[] = {0xB8, 0x00};
 
   uint8_t reply[3];
   
@@ -370,13 +371,12 @@ int main(void)
   gpio_set(GPIOB, GPIO5);
     
   timer_enable_counter(TIM2); // TOP
-  timer_enable_counter(TIM3); // BOT
-  
+  //timer_enable_counter(TIM3); // BOT
+
   cm_disable_interrupts();
-  m1_target_speed = 0x1000;
+  m1_target_period = 3000;
   motor1_state = STATE_ACCELERATING;
   cm_enable_interrupts();
-  
   
   while(1)
   {
