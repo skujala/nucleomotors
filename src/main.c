@@ -19,8 +19,6 @@
 #include <stdlib.h>
 
 static volatile uint32_t m1_target_period; /* Units steps/sec */
-static uint32_t period_step = 10; /* Acceleration 1000 steps/sec^2 */
-
 
 typedef enum {
   STATE_ACCELERATING,
@@ -31,13 +29,15 @@ typedef enum {
 
 volatile motor_state_t motor1_state;
 volatile motor_state_t motor2_state;
+volatile uint32_t step_count;
+volatile uint32_t last_period;
 
 
 static volatile uint32_t system_millis;
 
 static void nvic_setup(void)
 {
-  
+  nvic_enable_irq(NVIC_TIM2_IRQ);
 }
 
 static void rcc_clock_setup(void)
@@ -112,15 +112,6 @@ static void rcc_setup(void)
   rcc_periph_clock_enable(RCC_TIM3);
     
   rcc_periph_clock_enable(RCC_SPI1);
-  
-  /* 10 ms systick interrupt rate */
-  systick_set_reload(960000);
-  
-  systick_set_clocksource(STK_CSR_CLKSOURCE_AHB);
-  systick_counter_enable();
-
-  motor1_state = STATE_STEADYSTATE;
-  systick_interrupt_enable();
 }
 
 static void usart_setup(void)
@@ -192,12 +183,11 @@ static void tim2_setup(void)
   
   timer_continuous_mode(TIM2);
 
-  timer_set_period(TIM2, 0xFFFF);
-  
+  timer_set_period(TIM2, 0x300000);
   timer_set_oc_mode(TIM2, TIM_OC2, TIM_OCM_PWM1);
   timer_enable_oc_preload(TIM2, TIM_OC2);
   timer_enable_oc_output(TIM2, TIM_OC2);
-  timer_set_oc_value(TIM2, TIM_OC2, 0xFFFF >> 1);
+  timer_set_oc_value(TIM2, TIM_OC2, 0x300000 >> 1);
     
   timer_set_counter(TIM2, 0x00000000);
   
@@ -208,8 +198,34 @@ static void tim2_setup(void)
     the UG bit in the TIMx_EGR register.
 
    */
+  timer_enable_irq(TIM2, TIM_DIER_CC2IE);
   timer_generate_event(TIM2, TIM_EGR_UG);
 }
+
+void tim2_isr(void)
+{  
+  uint32_t next_period; 
+  
+  if (timer_get_flag(TIM2, TIM_SR_CC2IF)) {
+    timer_clear_flag(TIM2, TIM_SR_CC2IF);
+        
+    last_period = TIM2_ARR;
+    
+    if (last_period > m1_target_period) {
+      next_period = last_period - (uint64_t)2*last_period / (4*step_count + 1.);
+            
+      timer_set_period(TIM2, next_period);
+      timer_set_oc_value(TIM2, TIM_OC2, next_period >> 1);
+    }
+    
+    
+    if (step_count++ > 0x20000) {
+      timer_disable_counter(TIM2);
+    };
+    
+  }
+}
+
 
 static void tim3_setup(void)
 {
@@ -270,56 +286,6 @@ static void spi_setup(void)
   
 }
 
-/* Called when systick fires */
-void sys_tick_handler(void)
-{
-  system_millis++;
-  
-  motor_state_t next_state;
-  
-  
-  uint32_t m1_current_period = TIM2_ARR;
-  uint32_t m1_new_period = m1_current_period;
-    
-  switch(motor1_state) {
-    case STATE_ACCELERATING:
-      m1_new_period = m1_current_period * (1 - m1_current_period / 1000000.);
-      
-      if (m1_new_period < m1_target_period) {
-        m1_new_period = m1_target_period;
-        next_state = STATE_STEADYSTATE;
-      } else {
-        next_state = STATE_ACCELERATING;
-      }
-      break;
-    case STATE_DECELERATING:
-      m1_new_period = m1_current_period * (1 + m1_current_period / 1000000.);
-      
-      if (m1_new_period > m1_target_period) {
-        m1_new_period = m1_target_period;
-        next_state = STATE_STEADYSTATE;
-      } else {
-        next_state = STATE_DECELERATING;
-      }
-      break;
-    case STATE_STEADYSTATE:
-    case STATE_STOPPED:
-    default:
-      next_state = motor1_state;
-      break;
-  }
-  
-  if (m1_current_period != m1_target_period) {
-    timer_set_period(TIM2, m1_new_period);
-    timer_set_oc_value(TIM2, TIM_OC2, m1_new_period >> 1);
-    timer_generate_event(TIM2, TIM_EGR_UG);
-  }
-  
-  motor1_state = next_state;
-}
-
-
-
 static void l6474_message(uint8_t *msg_tx, uint8_t *msg_rx, uint8_t msg_len)
 {
   uint8_t i;
@@ -369,14 +335,13 @@ int main(void)
   
   gpio_clear(GPIOA, GPIO8);
   gpio_set(GPIOB, GPIO5);
-    
+
+
+  m1_target_period = 2890;
+  step_count = 1;
   timer_enable_counter(TIM2); // TOP
   //timer_enable_counter(TIM3); // BOT
 
-  cm_disable_interrupts();
-  m1_target_period = 3000;
-  motor1_state = STATE_ACCELERATING;
-  cm_enable_interrupts();
   
   while(1)
   {
