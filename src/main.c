@@ -5,6 +5,7 @@
  */
 
 #include <libopencmsis/core_cm3.h>
+#include <libopencm3/cm3/systick.h>
 #include <libopencm3/stm32/rcc.h>
 #include <libopencm3/stm32/pwr.h>
 #include <libopencm3/stm32/flash.h>
@@ -17,24 +18,40 @@
 
 #include <stdlib.h>
 
+static volatile uint32_t m1_target_period; /* Units steps/sec */
+
+typedef enum {
+  STATE_ACCELERATING,
+  STATE_DECELERATING,
+  STATE_STEADYSTATE,
+  STATE_STOPPED
+} motor_state_t;
+
+volatile motor_state_t motor1_state;
+volatile motor_state_t motor2_state;
+volatile uint32_t step_count;
+volatile uint32_t last_period;
+
+
+static volatile uint32_t system_millis;
+
 static void nvic_setup(void)
 {
-  /* Placeholder only */
-
+  nvic_enable_irq(NVIC_TIM2_IRQ);
 }
 
 static void rcc_clock_setup(void)
 {
   /* Modified from libopencm3 library function rcc_clock_setup_hse_3v3. Could be refactored. */
   
-  /* Enable internal high-speed oscillator. */
+  /* Enable internal high-period oscillator. */
   rcc_osc_on(RCC_HSI);
   rcc_wait_for_osc_ready(RCC_HSI);
   
   /* Select HSI as SYSCLK source. */
   rcc_set_sysclk_source(RCC_CFGR_SW_HSI);
   
-  /* Enable external high-speed oscillator 8MHz. */
+  /* Enable external high-period oscillator 8MHz. */
   rcc_osc_on(RCC_HSE);
   rcc_wait_for_osc_ready(RCC_HSE);
   
@@ -74,7 +91,7 @@ static void rcc_clock_setup(void)
   rcc_apb1_frequency = 48000000;
   rcc_apb2_frequency = 96000000;
   
-  /* Disable internal high-speed oscillator. */
+  /* Disable internal high-period oscillator. */
   rcc_osc_off(RCC_HSI);
 }
 
@@ -90,7 +107,7 @@ static void rcc_setup(void)
   /* Enable clocks for USART2. */
   rcc_periph_clock_enable(RCC_USART2);
 
-  /* Enable timers for PWM */
+  /* Enable timers for PWM and timing */
   rcc_periph_clock_enable(RCC_TIM2);
   rcc_periph_clock_enable(RCC_TIM3);
     
@@ -166,12 +183,11 @@ static void tim2_setup(void)
   
   timer_continuous_mode(TIM2);
 
-  timer_set_period(TIM2, 0x1000);
-  
+  timer_set_period(TIM2, 0x300000);
   timer_set_oc_mode(TIM2, TIM_OC2, TIM_OCM_PWM1);
   timer_enable_oc_preload(TIM2, TIM_OC2);
   timer_enable_oc_output(TIM2, TIM_OC2);
-  timer_set_oc_value(TIM2, TIM_OC2, 0x800);
+  timer_set_oc_value(TIM2, TIM_OC2, 0x300000 >> 1);
     
   timer_set_counter(TIM2, 0x00000000);
   
@@ -182,8 +198,34 @@ static void tim2_setup(void)
     the UG bit in the TIMx_EGR register.
 
    */
+  timer_enable_irq(TIM2, TIM_DIER_CC2IE);
   timer_generate_event(TIM2, TIM_EGR_UG);
 }
+
+void tim2_isr(void)
+{  
+  uint32_t next_period; 
+  
+  if (timer_get_flag(TIM2, TIM_SR_CC2IF)) {
+    timer_clear_flag(TIM2, TIM_SR_CC2IF);
+        
+    last_period = TIM2_ARR;
+    
+    if (last_period > m1_target_period) {
+      next_period = last_period - (uint64_t)2*last_period / (4*step_count + 1.);
+            
+      timer_set_period(TIM2, next_period);
+      timer_set_oc_value(TIM2, TIM_OC2, next_period >> 1);
+    }
+    
+    
+    if (step_count++ > 0x20000) {
+      timer_disable_counter(TIM2);
+    };
+    
+  }
+}
+
 
 static void tim3_setup(void)
 {
@@ -214,6 +256,9 @@ static void tim3_setup(void)
    */
   timer_generate_event(TIM3, TIM_EGR_UG);
 }
+
+
+
 
 
 static void spi_setup(void)
@@ -273,10 +318,10 @@ int main(void)
   usart_setup();
   spi_setup();
   tim2_setup();
-  tim3_setup();
+  tim3_setup();  
 
   /* ------------------- TOP - BOT -- */
-  uint8_t message1[] = {0xB8, 0xB8};
+  uint8_t message1[] = {0xB8, 0x00};
 
   uint8_t reply[3];
   
@@ -290,11 +335,15 @@ int main(void)
   
   gpio_clear(GPIOA, GPIO8);
   gpio_set(GPIOB, GPIO5);
-    
+
+
+  m1_target_period = 2890;
+  step_count = 1;
   timer_enable_counter(TIM2); // TOP
-  timer_enable_counter(TIM3); // BOT
+  //timer_enable_counter(TIM3); // BOT
+
   
-  while(1);
+  while(1)
   {
     __WFI();
   }
