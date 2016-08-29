@@ -30,7 +30,7 @@ typedef enum {
 volatile motor_state_t motor1_state;
 volatile motor_state_t motor2_state;
 volatile uint32_t step_count;
-volatile float last_period;
+volatile uint32_t last_period_eng;
 
 
 static volatile uint32_t system_millis;
@@ -183,11 +183,11 @@ static void tim2_setup(void)
   
   timer_continuous_mode(TIM2);
 
-  timer_set_period(TIM2, 0x80000);
+  timer_set_period(TIM2, 960000);
   timer_set_oc_mode(TIM2, TIM_OC2, TIM_OCM_PWM1);
   timer_enable_oc_preload(TIM2, TIM_OC2);
   timer_enable_oc_output(TIM2, TIM_OC2);
-  timer_set_oc_value(TIM2, TIM_OC2, 0x80000 >> 1);
+  timer_set_oc_value(TIM2, TIM_OC2, 960000 >> 1);
     
   timer_set_counter(TIM2, 0x00000000);
   
@@ -204,25 +204,26 @@ static void tim2_setup(void)
 
 void tim2_isr(void)
 {  
-  float next_period;
-  uint32_t next_period_trunc;
+  uint32_t next_period_eng;
+  uint32_t next_period;
   
   if (timer_get_flag(TIM2, TIM_SR_CC2IF)) {
     timer_clear_flag(TIM2, TIM_SR_CC2IF);
         
-    last_period = TIM2_ARR;
+    last_period_eng = TIM2_ARR << 13;
     
-    if (last_period > m1_target_period) {
+    if (last_period_eng > m1_target_period << 13) {
       
       if (step_count == 1) {
-        next_period = 0.4056 * last_period;
+        next_period_eng = 4056 * (last_period_eng >> 13) / 1000 << 13;
       } else {
-        next_period = last_period - 2. * last_period / (4. * step_count + 1.);        
+        next_period_eng = last_period_eng - 2 * last_period_eng / (4 * step_count + 1);        
       }
       
-      next_period_trunc = next_period;
-      timer_set_period(TIM2, next_period_trunc);
-      timer_set_oc_value(TIM2, TIM_OC2, next_period_trunc >> 1);
+      next_period = next_period_eng >> 13;
+      
+      timer_set_period(TIM2, next_period);
+      timer_set_oc_value(TIM2, TIM_OC2, next_period >> 1);
     }
     
     
@@ -245,12 +246,12 @@ static void tim3_setup(void)
   
   timer_continuous_mode(TIM3);
 
-  timer_set_period(TIM3, 0x1000);
+  timer_set_period(TIM3, 0x2000);
   
   timer_set_oc_mode(TIM3, TIM_OC2, TIM_OCM_PWM1);
   timer_enable_oc_preload(TIM3, TIM_OC2);
   timer_enable_oc_output(TIM3, TIM_OC2);
-  timer_set_oc_value(TIM3, TIM_OC2, 0x800);
+  timer_set_oc_value(TIM3, TIM_OC2, 0x2000 >> 1);
 
   timer_set_counter(TIM3, 0x0000);
 
@@ -328,7 +329,7 @@ int main(void)
   tim3_setup();  
 
   /* ------------------- TOP - BOT -- */
-  uint8_t message1[] = {0xB8, 0xB8};
+  uint8_t message1[] = {0xB8, 0x00};
 
   uint8_t reply[3];
   
@@ -344,7 +345,7 @@ int main(void)
   gpio_set(GPIOB, GPIO5);
 
 
-  m1_target_period = 3120;
+  m1_target_period = 4800;
   step_count = 1;
   timer_enable_counter(TIM2); // TOP
   timer_enable_counter(TIM3); // BOT
