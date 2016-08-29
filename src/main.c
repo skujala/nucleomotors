@@ -30,7 +30,7 @@ typedef enum {
 volatile motor_state_t motor1_state;
 volatile motor_state_t motor2_state;
 volatile uint32_t step_count;
-volatile uint32_t last_period;
+volatile float last_period;
 
 
 static volatile uint32_t system_millis;
@@ -183,11 +183,11 @@ static void tim2_setup(void)
   
   timer_continuous_mode(TIM2);
 
-  timer_set_period(TIM2, 0x300000);
+  timer_set_period(TIM2, 0x80000);
   timer_set_oc_mode(TIM2, TIM_OC2, TIM_OCM_PWM1);
   timer_enable_oc_preload(TIM2, TIM_OC2);
   timer_enable_oc_output(TIM2, TIM_OC2);
-  timer_set_oc_value(TIM2, TIM_OC2, 0x300000 >> 1);
+  timer_set_oc_value(TIM2, TIM_OC2, 0x80000 >> 1);
     
   timer_set_counter(TIM2, 0x00000000);
   
@@ -204,7 +204,8 @@ static void tim2_setup(void)
 
 void tim2_isr(void)
 {  
-  uint32_t next_period; 
+  float next_period;
+  uint32_t next_period_trunc;
   
   if (timer_get_flag(TIM2, TIM_SR_CC2IF)) {
     timer_clear_flag(TIM2, TIM_SR_CC2IF);
@@ -212,10 +213,16 @@ void tim2_isr(void)
     last_period = TIM2_ARR;
     
     if (last_period > m1_target_period) {
-      next_period = last_period - (uint64_t)2*last_period / (4*step_count + 1.);
-            
-      timer_set_period(TIM2, next_period);
-      timer_set_oc_value(TIM2, TIM_OC2, next_period >> 1);
+      
+      if (step_count == 1) {
+        next_period = 0.4056 * last_period;
+      } else {
+        next_period = last_period - 2. * last_period / (4. * step_count + 1.);        
+      }
+      
+      next_period_trunc = next_period;
+      timer_set_period(TIM2, next_period_trunc);
+      timer_set_oc_value(TIM2, TIM_OC2, next_period_trunc >> 1);
     }
     
     
@@ -321,7 +328,7 @@ int main(void)
   tim3_setup();  
 
   /* ------------------- TOP - BOT -- */
-  uint8_t message1[] = {0xB8, 0x00};
+  uint8_t message1[] = {0xB8, 0xB8};
 
   uint8_t reply[3];
   
@@ -337,10 +344,10 @@ int main(void)
   gpio_set(GPIOB, GPIO5);
 
 
-  m1_target_period = 2890;
+  m1_target_period = 3120;
   step_count = 1;
   timer_enable_counter(TIM2); // TOP
-  //timer_enable_counter(TIM3); // BOT
+  timer_enable_counter(TIM3); // BOT
 
   
   while(1)
