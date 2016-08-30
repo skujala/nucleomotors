@@ -20,6 +20,12 @@
 
 static volatile uint32_t m1_target_period; /* Units steps/sec */
 
+#define TO_ENG(x) ((x) << 11)
+#define TO_COMP(x) ((x) >> 11)
+
+#define MOTOR_START_PERIOD 2400000
+
+
 typedef enum {
   STATE_ACCELERATING,
   STATE_DECELERATING,
@@ -30,7 +36,7 @@ typedef enum {
 volatile motor_state_t motor1_state;
 volatile motor_state_t motor2_state;
 volatile uint32_t step_count;
-volatile uint32_t last_period_eng;
+volatile uint64_t last_period_eng;
 
 
 static volatile uint32_t system_millis;
@@ -183,11 +189,11 @@ static void tim2_setup(void)
   
   timer_continuous_mode(TIM2);
 
-  timer_set_period(TIM2, 960000);
+  timer_set_period(TIM2, MOTOR_START_PERIOD);
   timer_set_oc_mode(TIM2, TIM_OC2, TIM_OCM_PWM1);
   timer_enable_oc_preload(TIM2, TIM_OC2);
   timer_enable_oc_output(TIM2, TIM_OC2);
-  timer_set_oc_value(TIM2, TIM_OC2, 960000 >> 1);
+  timer_set_oc_value(TIM2, TIM_OC2, MOTOR_START_PERIOD >> 1);
     
   timer_set_counter(TIM2, 0x00000000);
   
@@ -204,33 +210,30 @@ static void tim2_setup(void)
 
 void tim2_isr(void)
 {  
-  uint32_t next_period_eng;
+  uint64_t next_period_eng;
   uint32_t next_period;
   
   if (timer_get_flag(TIM2, TIM_SR_CC2IF)) {
     timer_clear_flag(TIM2, TIM_SR_CC2IF);
         
-    last_period_eng = TIM2_ARR << 13;
+    last_period_eng = TO_ENG(TIM2_ARR);
     
-    if (last_period_eng > m1_target_period << 13) {
+    if (last_period_eng > TO_ENG((uint64_t)m1_target_period)) {
       
       if (step_count == 1) {
-        next_period_eng = 4056 * (last_period_eng >> 13) / 1000 << 13;
+        next_period_eng = TO_ENG(4056 * (TO_COMP(last_period_eng)) / 1000);
       } else {
         next_period_eng = last_period_eng - 2 * last_period_eng / (4 * step_count + 1);        
       }
       
-      next_period = next_period_eng >> 13;
+      next_period = TO_COMP(next_period_eng);
       
       timer_set_period(TIM2, next_period);
       timer_set_oc_value(TIM2, TIM_OC2, next_period >> 1);
     }
     
     
-    if (step_count++ > 0x20000) {
-      timer_disable_counter(TIM2);
-    };
-    
+    step_count++;
   }
 }
 
@@ -241,17 +244,17 @@ static void tim3_setup(void)
   timer_set_mode(TIM3, TIM_CR1_CKD_CK_INT,
                  TIM_CR1_CMS_EDGE, TIM_CR1_DIR_UP);
 
-  timer_set_prescaler(TIM3, 1);
+  timer_set_prescaler(TIM3, 96);
   timer_enable_preload(TIM3);
   
   timer_continuous_mode(TIM3);
 
-  timer_set_period(TIM3, 0x2000);
+  timer_set_period(TIM3, 600);
   
   timer_set_oc_mode(TIM3, TIM_OC2, TIM_OCM_PWM1);
   timer_enable_oc_preload(TIM3, TIM_OC2);
   timer_enable_oc_output(TIM3, TIM_OC2);
-  timer_set_oc_value(TIM3, TIM_OC2, 0x2000 >> 1);
+  timer_set_oc_value(TIM3, TIM_OC2, 600 >> 1);
 
   timer_set_counter(TIM3, 0x0000);
 
@@ -329,9 +332,14 @@ int main(void)
   tim3_setup();  
 
   /* ------------------- TOP - BOT -- */
+  
+  uint8_t message_get_param_step1[] = {0x36, 0x36};
+  uint8_t message_nop[] = {0x00, 0x00};
+  uint8_t message_set_param[] = {0x16, 0x16};
+
   uint8_t message1[] = {0xB8, 0x00};
 
-  uint8_t reply[3];
+  uint8_t reply[2];
   
   gpio_set(GPIOA, GPIO9);
   
@@ -339,13 +347,20 @@ int main(void)
     asm("nop");
   }
   
+  l6474_message(message_get_param_step1, NULL, 2);
+  l6474_message(message_nop, reply, 2);
+  
+  reply[0] = (0xF8 & reply[0]) | 0x0;
+  reply[1] = (0xF8 & reply[1]) | 0x2;
+
+  l6474_message(message_set_param, NULL, 2);
+  l6474_message(reply, NULL, 2);
+  
+  
   l6474_message(message1, reply, 2);
   
-  gpio_clear(GPIOA, GPIO8);
-  gpio_set(GPIOB, GPIO5);
 
-
-  m1_target_period = 4800;
+  m1_target_period = 60000;
   step_count = 1;
   timer_enable_counter(TIM2); // TOP
   timer_enable_counter(TIM3); // BOT
