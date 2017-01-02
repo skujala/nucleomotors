@@ -3,13 +3,7 @@
 */*.o
 */*.map
 
-
 *.pdf
-
-*.bin
-
-*.list
-
-*.hex
-
-*.list
+*/*.bin
+*/*.list
+*/*.hex
