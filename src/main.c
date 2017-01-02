@@ -23,7 +23,7 @@ static volatile uint32_t m1_target_period; /* Units steps/sec */
 #define TO_ENG(x) ((x) << 11)
 #define TO_COMP(x) ((x) >> 11)
 
-#define MOTOR_START_PERIOD 2400000
+#define MOTOR_START_PERIOD 96000
 
 
 typedef enum {
@@ -35,7 +35,9 @@ typedef enum {
 
 volatile motor_state_t motor1_state;
 volatile motor_state_t motor2_state;
-volatile uint32_t step_count;
+volatile uint32_t step_count_top;
+volatile uint32_t step_count_bot;
+
 volatile uint64_t last_period_eng;
 
 
@@ -44,6 +46,7 @@ static volatile uint32_t system_millis;
 static void nvic_setup(void)
 {
   nvic_enable_irq(NVIC_TIM2_IRQ);
+  nvic_enable_irq(NVIC_TIM3_IRQ);
 }
 
 static void rcc_clock_setup(void)
@@ -216,6 +219,7 @@ void tim2_isr(void)
   if (timer_get_flag(TIM2, TIM_SR_CC2IF)) {
     timer_clear_flag(TIM2, TIM_SR_CC2IF);
         
+    /*
     last_period_eng = TO_ENG(TIM2_ARR);
     
     if (last_period_eng > TO_ENG((uint64_t)m1_target_period)) {
@@ -231,9 +235,17 @@ void tim2_isr(void)
       timer_set_period(TIM2, next_period);
       timer_set_oc_value(TIM2, TIM_OC2, next_period >> 1);
     }
+    */
     
     
-    step_count++;
+    step_count_top++;
+
+    if (step_count_top > 1500) {
+      gpio_toggle(GPIOB, GPIO5); // TOP
+      
+      step_count_top = 0;
+    }
+
   }
 }
 
@@ -249,12 +261,12 @@ static void tim3_setup(void)
   
   timer_continuous_mode(TIM3);
 
-  timer_set_period(TIM3, 600);
+  timer_set_period(TIM3, 3000);
   
   timer_set_oc_mode(TIM3, TIM_OC2, TIM_OCM_PWM1);
   timer_enable_oc_preload(TIM3, TIM_OC2);
   timer_enable_oc_output(TIM3, TIM_OC2);
-  timer_set_oc_value(TIM3, TIM_OC2, 600 >> 1);
+  timer_set_oc_value(TIM3, TIM_OC2, 3000 >> 1);
 
   timer_set_counter(TIM3, 0x0000);
 
@@ -265,11 +277,48 @@ static void tim3_setup(void)
     the UG bit in the TIMx_EGR register.
 
    */
+  timer_enable_irq(TIM3, TIM_DIER_CC2IE);
   timer_generate_event(TIM3, TIM_EGR_UG);
 }
 
 
+void tim3_isr(void)
+{  
+  uint64_t next_period_eng;
+  uint32_t next_period;
+  
+  if (timer_get_flag(TIM3, TIM_SR_CC2IF)) {
+    timer_clear_flag(TIM3, TIM_SR_CC2IF);
+        
+    /*
+    last_period_eng = TO_ENG(TIM2_ARR);
+    
+    if (last_period_eng > TO_ENG((uint64_t)m1_target_period)) {
+      
+      if (step_count == 1) {
+        next_period_eng = TO_ENG(4056 * (TO_COMP(last_period_eng)) / 1000);
+      } else {
+        next_period_eng = last_period_eng - 2 * last_period_eng / (4 * step_count + 1);        
+      }
+      
+      next_period = TO_COMP(next_period_eng);
+      
+      timer_set_period(TIM2, next_period);
+      timer_set_oc_value(TIM3, TIM_OC2, next_period >> 1);
+    }
+    */
+    
+    
+    step_count_bot++;
 
+    if (step_count_bot > 1500) {
+      gpio_toggle(GPIOA, GPIO8); // BOT
+      
+      step_count_bot = 0;
+    }
+
+  }
+}
 
 
 static void spi_setup(void)
@@ -337,10 +386,10 @@ int main(void)
   uint8_t message_nop[] = {0x00, 0x00};
   uint8_t message_set_param[] = {0x16, 0x16};
 
-  uint8_t message1[] = {0xB8, 0x00};
+  uint8_t message1[] = {0xB8, 0xB8};
 
   uint8_t reply[2];
-  
+
   gpio_set(GPIOA, GPIO9);
   
   for (uint32_t i = 0; i < 100000; i++){
@@ -350,8 +399,8 @@ int main(void)
   l6474_message(message_get_param_step1, NULL, 2);
   l6474_message(message_nop, reply, 2);
   
-  reply[0] = (0xF8 & reply[0]) | 0x0;
-  reply[1] = (0xF8 & reply[1]) | 0x2;
+  reply[0] = (0xF8 & reply[0]) | 0x2; // Step size selection
+  reply[1] = (0xF8 & reply[1]) | 0x2; // Step size selection
 
   l6474_message(message_set_param, NULL, 2);
   l6474_message(reply, NULL, 2);
@@ -361,10 +410,16 @@ int main(void)
   
 
   m1_target_period = 60000;
-  step_count = 1;
+  step_count_top = 0;
+  step_count_bot = 0;
+
+//  gpio_clear(GPIOA, GPIO8); // TOP
+//  gpio_clear(GPIOB, GPIO5); // BOT
+  
   timer_enable_counter(TIM2); // TOP
   timer_enable_counter(TIM3); // BOT
-
+  
+  
   
   while(1)
   {
