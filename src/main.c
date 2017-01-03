@@ -23,7 +23,8 @@ static volatile uint32_t m1_target_period; /* Units steps/sec */
 #define TO_ENG(x) ((x) << 11)
 #define TO_COMP(x) ((x) >> 11)
 
-#define MOTOR_START_PERIOD 96000
+#define PRESCALER 48
+#define MOTOR_SPEED 500
 
 
 typedef enum {
@@ -187,16 +188,16 @@ static void tim2_setup(void)
   timer_set_mode(TIM2, TIM_CR1_CKD_CK_INT,
                  TIM_CR1_CMS_EDGE, TIM_CR1_DIR_UP);
 
-  timer_set_prescaler(TIM2, 1);
+  timer_set_prescaler(TIM2, PRESCALER);
   timer_enable_preload(TIM2);
   
   timer_continuous_mode(TIM2);
 
-  timer_set_period(TIM2, MOTOR_START_PERIOD);
+  timer_set_period(TIM2, MOTOR_SPEED);
   timer_set_oc_mode(TIM2, TIM_OC2, TIM_OCM_PWM1);
   timer_enable_oc_preload(TIM2, TIM_OC2);
   timer_enable_oc_output(TIM2, TIM_OC2);
-  timer_set_oc_value(TIM2, TIM_OC2, MOTOR_START_PERIOD >> 1);
+  timer_set_oc_value(TIM2, TIM_OC2, MOTOR_SPEED >> 1);
     
   timer_set_counter(TIM2, 0x00000000);
   
@@ -240,7 +241,7 @@ void tim2_isr(void)
     
     step_count_top++;
 
-    if (step_count_top > 1500) {
+    if (step_count_top > 10000) {
       gpio_toggle(GPIOB, GPIO5); // TOP
       
       step_count_top = 0;
@@ -256,17 +257,17 @@ static void tim3_setup(void)
   timer_set_mode(TIM3, TIM_CR1_CKD_CK_INT,
                  TIM_CR1_CMS_EDGE, TIM_CR1_DIR_UP);
 
-  timer_set_prescaler(TIM3, 96);
+  timer_set_prescaler(TIM3, PRESCALER);
   timer_enable_preload(TIM3);
   
   timer_continuous_mode(TIM3);
 
-  timer_set_period(TIM3, 3000);
+  timer_set_period(TIM3, MOTOR_SPEED);
   
   timer_set_oc_mode(TIM3, TIM_OC2, TIM_OCM_PWM1);
   timer_enable_oc_preload(TIM3, TIM_OC2);
   timer_enable_oc_output(TIM3, TIM_OC2);
-  timer_set_oc_value(TIM3, TIM_OC2, 3000 >> 1);
+  timer_set_oc_value(TIM3, TIM_OC2, MOTOR_SPEED >> 1);
 
   timer_set_counter(TIM3, 0x0000);
 
@@ -311,7 +312,7 @@ void tim3_isr(void)
     
     step_count_bot++;
 
-    if (step_count_bot > 1500) {
+    if (step_count_bot > 10000) {
       gpio_toggle(GPIOA, GPIO8); // BOT
       
       step_count_bot = 0;
@@ -384,9 +385,20 @@ int main(void)
   
   uint8_t message_get_param_step1[] = {0x36, 0x36};
   uint8_t message_nop[] = {0x00, 0x00};
-  uint8_t message_set_param[] = {0x16, 0x16};
+  uint8_t message_set_param_stepmode[] = {0x16, 0x16}; // SET PARAM STEP_MODE
+  uint8_t message_stepmode_value[] = {0xB8, 0xB8};
 
-  uint8_t message1[] = {0xB8, 0xB8};
+  uint8_t message_get_param_tval[] = {0x29, 0x29}; // SET PARAM TVAL  
+  uint8_t message_set_param_tval[] = {0x06, 0x06}; // SET PARAM TVAL  
+  
+  
+  /* 
+   * TVAL FORMULA: 
+   * current_value_amps = 4 / 128 * (bits+1) = (bits+1) >> 5
+   * => bits = floor(current_value_amps << 5 - 1)
+   */ 
+  uint8_t tval = 0x12; // TVAL 0.78125 A
+  
 
   uint8_t reply[2];
 
@@ -399,21 +411,31 @@ int main(void)
   l6474_message(message_get_param_step1, NULL, 2);
   l6474_message(message_nop, reply, 2);
   
-  reply[0] = (0xF8 & reply[0]) | 0x2; // Step size selection
-  reply[1] = (0xF8 & reply[1]) | 0x2; // Step size selection
+  reply[0] = (0xF8 & reply[0]) | 0x4; // Step size selection
+  reply[1] = (0xF8 & reply[1]) | 0x4; // Step size selection
 
-  l6474_message(message_set_param, NULL, 2);
+  l6474_message(message_set_param_stepmode, NULL, 2);
+  l6474_message(reply, NULL, 2);
+  
+  l6474_message(message_stepmode_value, reply, 2);
+
+  l6474_message(message_get_param_tval, NULL, 2);
+  l6474_message(message_nop, reply, 2);
+  
+  reply[0] = (0x7F & reply[0]) | tval; // TVAL
+  reply[1] = (0x7F & reply[1]) | tval; // TVAL
+  
+  l6474_message(message_set_param_tval, NULL, 2);
   l6474_message(reply, NULL, 2);
   
   
-  l6474_message(message1, reply, 2);
   
 
   m1_target_period = 60000;
   step_count_top = 0;
   step_count_bot = 0;
 
-//  gpio_clear(GPIOA, GPIO8); // TOP
+  //  gpio_set(GPIOA, GPIO8); // TOP
 //  gpio_clear(GPIOB, GPIO5); // BOT
   
   timer_enable_counter(TIM2); // TOP
