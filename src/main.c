@@ -214,8 +214,8 @@ static void tim2_setup(void)
 
 void tim2_isr(void)
 {  
-  uint64_t next_period_eng;
-  uint32_t next_period;
+//  uint64_t next_period_eng;
+//  uint32_t next_period;
   
   if (timer_get_flag(TIM2, TIM_SR_CC2IF)) {
     timer_clear_flag(TIM2, TIM_SR_CC2IF);
@@ -285,8 +285,8 @@ static void tim3_setup(void)
 
 void tim3_isr(void)
 {  
-  uint64_t next_period_eng;
-  uint32_t next_period;
+//  uint64_t next_period_eng;
+//  uint32_t next_period;
   
   if (timer_get_flag(TIM3, TIM_SR_CC2IF)) {
     timer_clear_flag(TIM3, TIM_SR_CC2IF);
@@ -383,13 +383,25 @@ int main(void)
 
   /* ------------------- TOP - BOT -- */
   
-  uint8_t message_get_param_step1[] = {0x36, 0x36};
+  uint8_t message_get_param_stepmode[] = {0x36, 0x36};
   uint8_t message_nop[] = {0x00, 0x00};
   uint8_t message_set_param_stepmode[] = {0x16, 0x16}; // SET PARAM STEP_MODE
-  uint8_t message_stepmode_value[] = {0xB8, 0xB8};
+  uint8_t message_enable_bridges[] = {0xB8, 0xB8};
 
-  uint8_t message_get_param_tval[] = {0x29, 0x29}; // SET PARAM TVAL  
-  uint8_t message_set_param_tval[] = {0x06, 0x06}; // SET PARAM TVAL  
+  uint8_t message_disable_bridges[] = {0xA8, 0xA8};
+  
+  uint8_t message_get_param_tval[] = {0x29, 0x29}; // GET PARAM TVAL  
+  uint8_t message_set_param_tval[] = {0x09, 0x09}; // SET PARAM TVAL  
+
+  uint8_t message_get_param_ocd_th[] = {0x33, 0x33}; // GET PARAM OCD_TH  
+  uint8_t message_set_param_ocd_th[] = {0x13, 0x13}; // SET PARAM OCD_TH  
+  
+  uint8_t message_get_config[] = {0x38, 0x38};
+  uint8_t message_set_config[] = {0x18, 0x18};
+  
+  
+  uint8_t message_config_hi[2];
+  uint8_t message_config_lo[2];
   
   
   /* 
@@ -397,18 +409,56 @@ int main(void)
    * current_value_amps = 4 / 128 * (bits+1) = (bits+1) >> 5
    * => bits = floor(current_value_amps << 5 - 1)
    */ 
-  uint8_t tval = 0x12; // TVAL 0.78125 A
+  uint8_t tval = 0x10; // TVAL 0.59375 A
+  
+  /*
+   * OCD_TH FORMULA:
+   * overcurrent_value_amps = 6/16 * (bits + 1)
+   * => bits = floor(overcurrent_value_amps * 16 / 6 - 1)
+   */
+  uint8_t ocd_th = 0x01; // OCD_TH 0.750 A 
+  
   
 
   uint8_t reply[2];
 
   gpio_set(GPIOA, GPIO9);
   
-  for (uint32_t i = 0; i < 100000; i++){
+  for (uint32_t i = 0; i < 300000; i++){
     asm("nop");
   }
   
-  l6474_message(message_get_param_step1, NULL, 2);
+  l6474_message(message_disable_bridges, reply, 2);
+
+  reply[0] = tval; // (0x7F & reply[0]) | tval; // TVAL
+  reply[1] = tval; // (0x7F & reply[1]) | tval; // TVAL
+  
+  l6474_message(message_set_param_tval, NULL, 2);
+  l6474_message(reply, NULL, 2);
+
+  reply[0] = ocd_th; // (0x7F & reply[0]) | tval; // TVAL
+  reply[1] = ocd_th; // (0x7F & reply[1]) | tval; // TVAL
+
+  l6474_message(message_set_param_ocd_th, NULL, 2);
+  l6474_message(reply, NULL, 2);
+
+  l6474_message(message_nop, reply, 2);
+
+
+  l6474_message(message_get_config, NULL, 2);
+  l6474_message(message_nop, message_config_hi, 2);
+  l6474_message(message_nop, message_config_lo, 2);
+  
+  
+  message_config_lo[0] = (0x5F & message_config_lo[0]) | 0x80; // Set OC_SD = 1, TQREG = 0 
+  message_config_lo[0] = (0x5F & message_config_lo[0]) | 0x80;
+  
+  l6474_message(message_set_config, NULL, 2);
+  l6474_message(message_nop, message_config_hi, 2);
+  l6474_message(message_nop, message_config_lo, 2);
+  
+  
+  l6474_message(message_get_param_stepmode, NULL, 2);
   l6474_message(message_nop, reply, 2);
   
   reply[0] = (0xF8 & reply[0]) | 0x4; // Step size selection
@@ -416,18 +466,12 @@ int main(void)
 
   l6474_message(message_set_param_stepmode, NULL, 2);
   l6474_message(reply, NULL, 2);
-  
-  l6474_message(message_stepmode_value, reply, 2);
 
-  l6474_message(message_get_param_tval, NULL, 2);
-  l6474_message(message_nop, reply, 2);
+
+  //l6474_message(message_enable_bridges, reply, 2);
+
   
-  reply[0] = (0x7F & reply[0]) | tval; // TVAL
-  reply[1] = (0x7F & reply[1]) | tval; // TVAL
-  
-  l6474_message(message_set_param_tval, NULL, 2);
-  l6474_message(reply, NULL, 2);
-  
+  l6474_message(message_enable_bridges, reply, 2);
   
   
 
@@ -435,8 +479,8 @@ int main(void)
   step_count_top = 0;
   step_count_bot = 0;
 
-  //  gpio_set(GPIOA, GPIO8); // TOP
-//  gpio_clear(GPIOB, GPIO5); // BOT
+//  gpio_set(GPIOA, GPIO8); // TOP
+//  gpio_set(GPIOB, GPIO5); // BOT
   
   timer_enable_counter(TIM2); // TOP
   timer_enable_counter(TIM3); // BOT
