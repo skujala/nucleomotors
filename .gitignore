@@ -6,3 +6,7 @@
 */*.bin
 */*.list
 */*.hex
+
+src/gcodeinterpreter.c
+
+src/gcodeinterpreter
