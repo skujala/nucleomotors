@@ -1,36 +1,4 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <stdint.h>
-#include <inttypes.h>
-
-#include <string.h>
-
-
-
-
-typedef enum {
-  FORWARD = 0,
-  BACKWARD
-} direction_t;
-
-typedef struct {
-  // Ragel req'd
-  uint16_t    cs, act;
-
-  // Axis data
-  uint32_t    feedrate;
-  uint32_t    x_goal_steps;
-  uint32_t    y_goal_steps;
-
-  direction_t x_direction;  
-  direction_t y_direction;
-  
-  uint32_t    x_actual_steps;
-  uint32_t    y_actual_steps;
-  
-  uint32_t    *current_parameter, current_value_int, current_value_frac;
-  direction_t *current_direction;  
-} motor_state_t;
+#include "gcodeinterpreter.h"
 
 #define RESET(x) { \
   x->x_goal_steps = 0; \
@@ -44,26 +12,29 @@ typedef struct {
 }
 
 
-
-#define DEFAULT_FEEDRATE 1000
-
 %%{
   machine main;
-  
   write data;
   
   access state->;
 }%%
-
   
-char *scan(motor_state_t *state, char *txt, uint16_t size)
+void initialize_parser_state(motor_state_t *state)
 {
-  char *p = txt;
-  char *pe = p + size;
+  %%{ write init; }%%
+  
+  RESET(state);
+  
+  state->feedrate = DEFAULT_FEEDRATE;  
+}
+  
+void feed_parser(motor_state_t *state, char txt)
+{
+  char *p = &txt;
+  char *pe = p + 1;
   char *eof = NULL;
     
   %%{
-    write init;
         
     action set_negative {
       if (state->current_direction) {
@@ -84,7 +55,7 @@ char *scan(motor_state_t *state, char *txt, uint16_t size)
     action got_number {      
       *(state->current_parameter) = state->current_value_int;
     
-      // This would be perfect place to convert the number to fixed-point values      
+      // This would be perfect place to convert the number to fixed-point values if needed     
     }
         
     action G00 {
@@ -150,6 +121,7 @@ char *scan(motor_state_t *state, char *txt, uint16_t size)
       fhold; fgoto line;
     }
     
+    
     command_end = space* . '\r'? . '\n'; # Allow Windows and Unix style line-endings
 
     number = 
@@ -183,26 +155,23 @@ char *scan(motor_state_t *state, char *txt, uint16_t size)
 
 #   End g-codes
 
+    write exec;
   }%%
-  
-  %%write exec;
-  
-  return p;
 }
 
-
-int main(void)
-{
-  motor_state_t state;
-  
-  state.feedrate = DEFAULT_FEEDRATE;
-
-  
-  char hello[] = "G01 F1400\nG01 Y5 X-50 F200   \nG01 X20\nG01 X23 Y20s\nG00 X10 Y20\n";
-    
-  char *p = &hello[0];
-        
-  p = scan(&state, p, strlen(p));    
-  return 0;
-}
+// This is for testing
+// int main(void)
+// {
+//   motor_state_t state;
+//   
+//   initialize_parser_state(&state);
+//     
+//   char hello[] = "G01 F1400\nG01 Y5 X-50 F200   \r\nG01 X20\nG01 X23 Y20s\nG00 X10 Y20\n";
+//       
+//   for (uint16_t i = 0; i < strlen(hello); i++) {
+//     feed_parser(&state, hello[i]);
+//   }
+//   
+//   return 0;
+// }
 

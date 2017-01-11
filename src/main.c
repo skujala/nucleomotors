@@ -18,12 +18,12 @@
 
 #include <stdlib.h>
 
-static volatile uint32_t m1_target_period; /* Units steps/sec */
+
 
 #define TO_ENG(x) ((x) << 11)
 #define TO_COMP(x) ((x) >> 11)
 
-#define PRESCALER 48
+#define PRESCALER 92
 #define MOTOR_SPEED 500
 
 
@@ -43,6 +43,8 @@ volatile uint64_t last_period_eng;
 
 
 static volatile uint32_t system_millis;
+
+static volatile 
 
 static void nvic_setup(void)
 {
@@ -212,45 +214,6 @@ static void tim2_setup(void)
   timer_generate_event(TIM2, TIM_EGR_UG);
 }
 
-void tim2_isr(void)
-{  
-//  uint64_t next_period_eng;
-//  uint32_t next_period;
-  
-  if (timer_get_flag(TIM2, TIM_SR_CC2IF)) {
-    timer_clear_flag(TIM2, TIM_SR_CC2IF);
-        
-    /*
-    last_period_eng = TO_ENG(TIM2_ARR);
-    
-    if (last_period_eng > TO_ENG((uint64_t)m1_target_period)) {
-      
-      if (step_count == 1) {
-        next_period_eng = TO_ENG(4056 * (TO_COMP(last_period_eng)) / 1000);
-      } else {
-        next_period_eng = last_period_eng - 2 * last_period_eng / (4 * step_count + 1);        
-      }
-      
-      next_period = TO_COMP(next_period_eng);
-      
-      timer_set_period(TIM2, next_period);
-      timer_set_oc_value(TIM2, TIM_OC2, next_period >> 1);
-    }
-    */
-    
-    
-    step_count_top++;
-
-    if (step_count_top > 10000) {
-      gpio_toggle(GPIOB, GPIO5); // TOP
-      
-      step_count_top = 0;
-    }
-
-  }
-}
-
-
 static void tim3_setup(void)
 {
   timer_reset(TIM3);
@@ -283,33 +246,28 @@ static void tim3_setup(void)
 }
 
 
-void tim3_isr(void)
+void tim2_isr(void)
 {  
-//  uint64_t next_period_eng;
-//  uint32_t next_period;
-  
-  if (timer_get_flag(TIM3, TIM_SR_CC2IF)) {
-    timer_clear_flag(TIM3, TIM_SR_CC2IF);
-        
-    /*
-    last_period_eng = TO_ENG(TIM2_ARR);
+  if (timer_get_flag(TIM2, TIM_SR_CC2IF)) {
     
-    if (last_period_eng > TO_ENG((uint64_t)m1_target_period)) {
+    timer_clear_flag(TIM2, TIM_SR_CC2IF);
+    
+    step_count_top++;
+
+    if (step_count_top > 10000) {
+      gpio_toggle(GPIOB, GPIO5); // TOP
       
-      if (step_count == 1) {
-        next_period_eng = TO_ENG(4056 * (TO_COMP(last_period_eng)) / 1000);
-      } else {
-        next_period_eng = last_period_eng - 2 * last_period_eng / (4 * step_count + 1);        
-      }
-      
-      next_period = TO_COMP(next_period_eng);
-      
-      timer_set_period(TIM2, next_period);
-      timer_set_oc_value(TIM3, TIM_OC2, next_period >> 1);
+      step_count_top = 0;
     }
-    */
+  }
+}
+
+
+void tim3_isr(void)
+{ 
+  if (timer_get_flag(TIM3, TIM_SR_CC2IF)) {
     
-    
+    timer_clear_flag(TIM3, TIM_SR_CC2IF);
     step_count_bot++;
 
     if (step_count_bot > 10000) {
