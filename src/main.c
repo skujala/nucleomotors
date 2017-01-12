@@ -418,7 +418,7 @@ int main(void)
   
   l6474_message(message_enable_bridges, reply, 2);
   
-  char hello[] = "G00          Y24000 F4000\n";
+  char hello[] = "G00 X-48000 Y-24000 F8000\n";
   
   for (uint16_t i = 0; i < 26; i++) {
     feed_parser(&state, hello[i]);
