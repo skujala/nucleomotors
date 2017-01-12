@@ -48,7 +48,7 @@ typedef struct {
   uint32_t    x_actual_steps;
   uint32_t    y_actual_steps;
   
-  uint8_t     axes_state;
+  volatile uint8_t     axes_state;
 } motor_state_t;
 
   

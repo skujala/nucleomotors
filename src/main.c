@@ -243,8 +243,8 @@ void tim2_isr(void)
     state.x_actual_steps++;
 
     if (state.x_actual_steps >= state.x_goal_steps) {
-      timer_disable_counter(TIM2);
       state.axes_state &= ~(X_MOVING);
+      timer_disable_counter(TIM2);
     }
   }
 }
@@ -259,8 +259,8 @@ void tim3_isr(void)
     state.y_actual_steps++;
 
     if (state.y_actual_steps >= state.y_goal_steps) {
-      timer_disable_counter(TIM3);
       state.axes_state &= ~(Y_MOVING);
+      timer_disable_counter(TIM3);
     }
   }
 }
@@ -425,13 +425,14 @@ int main(void)
   }
   
   while (state.axes_state & (X_MOVING | Y_MOVING)) {
-    __WFI();
+    asm("nop");
   }
   
+  char hello2[] = "G00  X48000  Y24000 F8000\n";
   
-/*  for (uint16_t i = 0; i < 23; i++) {
-    feed_parser(&state, hello[i]);
-  } */
+  for (uint16_t i = 0; i < 26; i++) {
+    feed_parser(&state, hello2[i]);
+  }
   
   while(1)
   {

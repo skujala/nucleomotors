@@ -116,14 +116,13 @@ parser_error_t feed_parser(motor_state_t *state, char txt)
         timer_generate_event(TIM3, TIM_EGR_UG);
         
         if (state->x_goal_steps != 0) {
-          timer_enable_counter(TIM2);
           state->axes_state |= X_MOVING;
-          
+          timer_enable_counter(TIM2);
         }
         
         if (state->y_goal_steps != 0){
-          timer_enable_counter(TIM3);
           state->axes_state |= Y_MOVING;
+          timer_enable_counter(TIM3);
         }
       }      
       
