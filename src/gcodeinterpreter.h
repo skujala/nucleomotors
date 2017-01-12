@@ -1,23 +1,37 @@
 #ifndef GCODEINTERPRETER_H_713CE701
 #define GCODEINTERPRETER_H_713CE701
 
-#include <stdio.h>
-#include <stdlib.h>
+#include <libopencm3/stm32/gpio.h>
+#include <libopencm3/stm32/timer.h>
+
 #include <stdint.h>
 #include <inttypes.h>
-
-#include <string.h>
-
-#define DEFAULT_FEEDRATE 1000
+#include <math.h>
 
 typedef enum {
   FORWARD = 0,
   BACKWARD
 } direction_t;
 
+typedef enum {
+  OK = 0,
+  SYNTAX_ERROR,
+  NUMERIC_ERROR,
+  AXIS_ERROR,
+  SET_AXIS_ERROR
+} parser_error_t;
+
+typedef enum {
+  ALL_DONE = 0,
+  X_MOVING = 1,
+  Y_MOVING = 2
+} axis_states_t;
+
 typedef struct {
   // Ragel req'd
   uint16_t    cs, act;
+  parser_error_t ret;
+  
 
   // Axis data -- populated by the parser state machine
   uint32_t    feedrate;
@@ -32,13 +46,17 @@ typedef struct {
   
   // Axis data -- populated by stepper motor driver state machines
   uint32_t    x_actual_steps;
-  uint32_t    y_actual_steps;  
+  uint32_t    y_actual_steps;
+  
+  uint8_t     axes_state;
 } motor_state_t;
+
+  
 
 
 // API
-void initialize_parser_state(motor_state_t *state);
-void feed_parser(motor_state_t *state, char txt);
+void initialize_parser_state(motor_state_t *state, uint32_t default_feedrate);
+parser_error_t feed_parser(motor_state_t *state, char txt);
 
 
 #endif /* end of include guard: GCODEINTERPRETER_H_713CE701 */

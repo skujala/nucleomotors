@@ -22,6 +22,8 @@ OPENCM3_DIR=../libopencm3
 BINARY = main
 OBJS += gcodeinterpreter.o
 
+LDLIBS += -lm
+
 gcodeinterpreter.o: gcodeinterpreter.c
 
 %.c: %.rl

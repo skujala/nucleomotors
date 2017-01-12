@@ -18,33 +18,20 @@
 
 #include <stdlib.h>
 
+#include "gcodeinterpreter.h"
+
+
+#define DEFAULT_FEEDRATE 1000
 
 
 #define TO_ENG(x) ((x) << 11)
 #define TO_COMP(x) ((x) >> 11)
 
-#define PRESCALER 92
-#define MOTOR_SPEED 500
+#define PRESCALER 96-1
+#define MOTOR_SPEED 1000
 
+motor_state_t state;
 
-typedef enum {
-  STATE_ACCELERATING,
-  STATE_DECELERATING,
-  STATE_STEADYSTATE,
-  STATE_STOPPED
-} motor_state_t;
-
-volatile motor_state_t motor1_state;
-volatile motor_state_t motor2_state;
-volatile uint32_t step_count_top;
-volatile uint32_t step_count_bot;
-
-volatile uint64_t last_period_eng;
-
-
-static volatile uint32_t system_millis;
-
-static volatile 
 
 static void nvic_setup(void)
 {
@@ -196,10 +183,11 @@ static void tim2_setup(void)
   timer_continuous_mode(TIM2);
 
   timer_set_period(TIM2, MOTOR_SPEED);
+  timer_set_oc_value(TIM2, TIM_OC2, MOTOR_SPEED >> 1);
+
   timer_set_oc_mode(TIM2, TIM_OC2, TIM_OCM_PWM1);
   timer_enable_oc_preload(TIM2, TIM_OC2);
   timer_enable_oc_output(TIM2, TIM_OC2);
-  timer_set_oc_value(TIM2, TIM_OC2, MOTOR_SPEED >> 1);
     
   timer_set_counter(TIM2, 0x00000000);
   
@@ -224,13 +212,13 @@ static void tim3_setup(void)
   timer_enable_preload(TIM3);
   
   timer_continuous_mode(TIM3);
-
-  timer_set_period(TIM3, MOTOR_SPEED);
   
+  timer_set_period(TIM3, MOTOR_SPEED);
+  timer_set_oc_value(TIM3, TIM_OC2, MOTOR_SPEED >> 1);
+
   timer_set_oc_mode(TIM3, TIM_OC2, TIM_OCM_PWM1);
   timer_enable_oc_preload(TIM3, TIM_OC2);
   timer_enable_oc_output(TIM3, TIM_OC2);
-  timer_set_oc_value(TIM3, TIM_OC2, MOTOR_SPEED >> 1);
 
   timer_set_counter(TIM3, 0x0000);
 
@@ -247,35 +235,33 @@ static void tim3_setup(void)
 
 
 void tim2_isr(void)
-{  
+{
   if (timer_get_flag(TIM2, TIM_SR_CC2IF)) {
     
     timer_clear_flag(TIM2, TIM_SR_CC2IF);
     
-    step_count_top++;
+    state.x_actual_steps++;
 
-    if (step_count_top > 10000) {
-      gpio_toggle(GPIOB, GPIO5); // TOP
-      
-      step_count_top = 0;
+    if (state.x_actual_steps >= state.x_goal_steps) {
+      timer_disable_counter(TIM2);
+      state.axes_state &= ~(X_MOVING);
     }
   }
 }
 
 
 void tim3_isr(void)
-{ 
+{   
   if (timer_get_flag(TIM3, TIM_SR_CC2IF)) {
     
     timer_clear_flag(TIM3, TIM_SR_CC2IF);
-    step_count_bot++;
+    
+    state.y_actual_steps++;
 
-    if (step_count_bot > 10000) {
-      gpio_toggle(GPIOA, GPIO8); // BOT
-      
-      step_count_bot = 0;
+    if (state.y_actual_steps >= state.y_goal_steps) {
+      timer_disable_counter(TIM3);
+      state.axes_state &= ~(Y_MOVING);
     }
-
   }
 }
 
@@ -330,14 +316,17 @@ static void l6474_message(uint8_t *msg_tx, uint8_t *msg_rx, uint8_t msg_len)
 
 
 int main(void)
-{
+{   
+  initialize_parser_state(&state, 1000);
+  
   rcc_setup();
   nvic_setup();
   gpio_setup();
   usart_setup();
   spi_setup();
   tim2_setup();
-  tim3_setup();  
+  tim3_setup();
+  
 
   /* ------------------- TOP - BOT -- */
   
@@ -348,10 +337,10 @@ int main(void)
 
   uint8_t message_disable_bridges[] = {0xA8, 0xA8};
   
-  uint8_t message_get_param_tval[] = {0x29, 0x29}; // GET PARAM TVAL  
+//  uint8_t message_get_param_tval[] = {0x29, 0x29}; // GET PARAM TVAL  
   uint8_t message_set_param_tval[] = {0x09, 0x09}; // SET PARAM TVAL  
 
-  uint8_t message_get_param_ocd_th[] = {0x33, 0x33}; // GET PARAM OCD_TH  
+//  uint8_t message_get_param_ocd_th[] = {0x33, 0x33}; // GET PARAM OCD_TH  
   uint8_t message_set_param_ocd_th[] = {0x13, 0x13}; // SET PARAM OCD_TH  
   
   uint8_t message_get_config[] = {0x38, 0x38};
@@ -380,8 +369,10 @@ int main(void)
 
   uint8_t reply[2];
 
+  // Enable the L6474
   gpio_set(GPIOA, GPIO9);
   
+  // Wait for L6474 to get its shit together 
   for (uint32_t i = 0; i < 300000; i++){
     asm("nop");
   }
@@ -424,26 +415,23 @@ int main(void)
 
   l6474_message(message_set_param_stepmode, NULL, 2);
   l6474_message(reply, NULL, 2);
-
-
-  //l6474_message(message_enable_bridges, reply, 2);
-
   
   l6474_message(message_enable_bridges, reply, 2);
   
+  char hello[] = "G00          Y24000 F4000\n";
   
-
-  m1_target_period = 60000;
-  step_count_top = 0;
-  step_count_bot = 0;
-
-//  gpio_set(GPIOA, GPIO8); // TOP
-//  gpio_set(GPIOB, GPIO5); // BOT
+  for (uint16_t i = 0; i < 26; i++) {
+    feed_parser(&state, hello[i]);
+  }
   
-  timer_enable_counter(TIM2); // TOP
-  timer_enable_counter(TIM3); // BOT
+  while (state.axes_state & (X_MOVING | Y_MOVING)) {
+    __WFI();
+  }
   
   
+/*  for (uint16_t i = 0; i < 23; i++) {
+    feed_parser(&state, hello[i]);
+  } */
   
   while(1)
   {
