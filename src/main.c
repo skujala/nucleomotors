@@ -119,7 +119,7 @@ static void usart_setup(void)
   usart_set_baudrate(USART2, 115200);
   usart_set_databits(USART2, 8);
   usart_set_stopbits(USART2, USART_STOPBITS_1);
-  usart_set_mode(USART2, USART_MODE_TX);
+  usart_set_mode(USART2, USART_MODE_TX_RX);
   usart_set_parity(USART2, USART_PARITY_NONE);
   usart_set_flow_control(USART2, USART_FLOWCONTROL_NONE);
 
@@ -132,7 +132,6 @@ static void gpio_setup(void)
   /*** L6474 DIRECTION PINS for X-NUCLEO-IHM01A1 ***/
   gpio_mode_setup(GPIOA, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, GPIO8);
   gpio_mode_setup(GPIOB, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, GPIO5);
-  
   
   /*** L6474 STBY\\RESET pin ***/  
   gpio_mode_setup(GPIOA, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, GPIO9);
@@ -316,7 +315,11 @@ static void l6474_message(uint8_t *msg_tx, uint8_t *msg_rx, uint8_t msg_len)
 
 
 int main(void)
-{   
+{
+  uint8_t c;
+  
+  parser_error_t ret;
+  
   initialize_parser_state(&state, 1000);
   
   rcc_setup();
@@ -417,25 +420,22 @@ int main(void)
   l6474_message(reply, NULL, 2);
   
   l6474_message(message_enable_bridges, reply, 2);
-  
-  char hello[] = "G00 X-48000 Y-24000 F8000\n";
-  
-  for (uint16_t i = 0; i < 26; i++) {
-    feed_parser(&state, hello[i]);
-  }
-  
-  while (state.axes_state & (X_MOVING | Y_MOVING)) {
-    __WFI();
-  }
-  
-  char hello2[] = "G00  X48000  Y24000 F20000\n";
-  
-  for (uint16_t i = 0; i < 27; i++) {
-    feed_parser(&state, hello2[i]);
-  }
-  
+    
   while(1)
   {
-    __WFI();
+    usart_send_blocking(USART2, '\n');    
+    usart_send_blocking(USART2, '\r');
+    usart_send_blocking(USART2, '>');
+    usart_send_blocking(USART2, ' ');
+    
+    do {
+      c = usart_recv_blocking(USART2);
+      
+      ret = feed_parser(&state, c);
+    } while (ret != WORKING);
+            
+    while (state.axes_state & (X_MOVING | Y_MOVING)) {
+      __WFI();
+    }
   }
 }

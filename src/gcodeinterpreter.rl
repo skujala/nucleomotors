@@ -38,7 +38,9 @@ parser_error_t feed_parser(motor_state_t *state, char txt)
   %%{
         
     action set_negative {
-      *(state->current_direction) = BACKWARD;
+      if (state->current_direction != 0) {
+        *(state->current_direction) = BACKWARD;
+      }
     }
     
     action accum_int {
@@ -63,12 +65,9 @@ parser_error_t feed_parser(motor_state_t *state, char txt)
       // This would be perfect place to convert the number to fixed-point values if needed     
     }
         
-    action G00 {
-    }
-        
     action select_parameter_x {
       state->current_parameter = &state->x_goal_steps;
-      state->current_direction = &state->x_direction;
+      state->current_direction = &state->x_direction;      
     }
 
     action select_parameter_y {
@@ -76,18 +75,14 @@ parser_error_t feed_parser(motor_state_t *state, char txt)
       state->current_direction = &state->y_direction;
     }
 
-    action select_parameter_f {      
+    action select_parameter_f {
       state->current_parameter = &state->feedrate;
       state->current_direction = 0;
     }
     
-    action set_parameter {
-    }
-    
-    action commit {
-      
-      state->x_direction == FORWARD ? gpio_clear(GPIOA, GPIO8) : gpio_set(GPIOA, GPIO8);
-      state->y_direction == FORWARD ? gpio_clear(GPIOB, GPIO5) : gpio_set(GPIOB, GPIO5);
+    action commit {      
+      state->y_direction == FORWARD ? gpio_clear(GPIOA, GPIO8) : gpio_set(GPIOA, GPIO8);
+      state->x_direction == FORWARD ? gpio_clear(GPIOB, GPIO5) : gpio_set(GPIOB, GPIO5);
 
       // calculate the feedrates / axis
       
@@ -126,15 +121,17 @@ parser_error_t feed_parser(motor_state_t *state, char txt)
         }
       }      
       
-      state->ret = OK;
+      state->ret = WORKING;
     }
     
     action reset_value {
       state->current_value_int = 0;
       state->current_value_frac = 0;
+      state->current_direction = NULL;
+      state->current_parameter = NULL;
     }
     
-    action reset {
+    action reset {      
       timer_disable_counter(TIM2);
       timer_disable_counter(TIM3);
       
@@ -170,8 +167,9 @@ parser_error_t feed_parser(motor_state_t *state, char txt)
       fhold; fgoto line;
     }
     
+    sep = [ \t]+;
     
-    command_end = space* . '\r'? . '\n'; # Allow Windows and Unix style line-endings
+    command_end = sep* . ('\n'|'\r'){1,}; # Allow Windows and Unix style line-endings
 
     number = 
       (('-' @set_negative | '+' )? .    # set the integer part negative if needed
@@ -188,17 +186,16 @@ parser_error_t feed_parser(motor_state_t *state, char txt)
 
 # Supported axis
         
-    sep = space+;
         
     axis = (
-      ('X' %select_parameter_x . number ) |
-      ('Y' %select_parameter_y . number ) |  
-      ('F' %select_parameter_f . positive_number)
-    ) >reset_value %set_parameter $err(set_parameter_err);
+      ('X' @select_parameter_x . number ) |
+      ('Y' @select_parameter_y . number ) |  
+      ('F' @select_parameter_f . positive_number)
+    ) >reset_value $err(set_parameter_err);
 
-    opcode_00 = 'G0' . [01] %(G00) >reset . (space+ . axis)+;
+    opcode_00 = 'G0' >reset . [01] . (sep+ . axis)+;
         
-    main := (opcode_00 @err(cmd_err) . command_end @commit)*;
+    main := (opcode_00 @err(cmd_err) . command_end @commit)* ; 
     
     line := ( any* -- command_end ) . command_end @{ fgoto main; };
 

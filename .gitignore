@@ -8,5 +8,5 @@
 */*.hex
 
 src/gcodeinterpreter.c
-
-src/gcodeinterpreter
+src/*.pdf
+src/*.dot
