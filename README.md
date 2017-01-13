@@ -1,14 +1,21 @@
 # README
 
-This is my attempt at running two X-Nucleo-IHM01A1 shields (stepper motor controllers) on a
-STM32 Nucleo-F411RE evaluation board. Current goal is to replicate the functionality of an
-[mbed](https://mbed.com) example code
-[`HelloWorld_IHM01A1_2Motors`](https://developer.mbed.org/teams/ST/code/HelloWorld_IHM01A1_2Moto
-rs). No disrespect intended, but I favor C over C++ without all of the information hiding that
-mbed code contains. For learning purposes I want to know exactly what my code does.
+This is my attempt at running two X-Nucleo-IHM01A1 shields (stepper motor controllers) on a STM32 Nucleo-F411RE evaluation board, using plain C and libopencm3.
+
+Currently the code receives simple gcode commands (one command per line) from USART2, which is on Nucleo boards presents a terminal emulator on the computer. The gcode parser is implemented using ragel. Only moves in lines, no arcs.
+
+Example command: 
+<code>G00 X2000 Y-3000 F800</code>
+runs the x-axis 2000 steps forward and the y-axis -3000 steps backwards, at combined speed 800 steps / unit time.
 
 Feel free to use my code as you see fit. This is a work in progress.
 
+## Unimplemented and TODO
+
+* Acceleration and deceleration
+* Check the appropriate scalings and whatnot, so that speed would be in steps/second
+* Moar error checking
+* Moar refactoring
 
 ## Board connections
 
