@@ -6,7 +6,7 @@ Currently the code receives simple gcode commands (one command per line) from US
 
 Example command: 
 <code>G00 X2000 Y-3000 F800</code>
-runs the x-axis 2000 steps forward and the y-axis -3000 steps backwards, at combined speed 800 steps / unit time.
+runs the x-axis 2000 steps forward and the y-axis 3000 steps backwards, at combined speed 800 steps / unit time.
 
 Feel free to use my code as you see fit. This is a work in progress.
 
