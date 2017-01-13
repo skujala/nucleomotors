@@ -20,6 +20,17 @@
 OPENCM3_DIR=../libopencm3
 
 BINARY = main
+OBJS += gcodeinterpreter.o
+
+LDLIBS += -lm
+
+gcodeinterpreter.o: gcodeinterpreter.c
+
+%.c: %.rl
+	@#printf "  RAGEL   $(*).c\n"
+	ragel -C -T0 $< -o $@  
+
+
 
 LDSCRIPT = nucleo-f411re.ld
 

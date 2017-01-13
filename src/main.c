@@ -18,32 +18,25 @@
 
 #include <stdlib.h>
 
-static volatile uint32_t m1_target_period; /* Units steps/sec */
+#include "gcodeinterpreter.h"
+
+
+#define DEFAULT_FEEDRATE 1000
+
 
 #define TO_ENG(x) ((x) << 11)
 #define TO_COMP(x) ((x) >> 11)
 
-#define MOTOR_START_PERIOD 2400000
+#define PRESCALER 96-1
+#define MOTOR_SPEED 1000
 
+motor_state_t state;
 
-typedef enum {
-  STATE_ACCELERATING,
-  STATE_DECELERATING,
-  STATE_STEADYSTATE,
-  STATE_STOPPED
-} motor_state_t;
-
-volatile motor_state_t motor1_state;
-volatile motor_state_t motor2_state;
-volatile uint32_t step_count;
-volatile uint64_t last_period_eng;
-
-
-static volatile uint32_t system_millis;
 
 static void nvic_setup(void)
 {
   nvic_enable_irq(NVIC_TIM2_IRQ);
+  nvic_enable_irq(NVIC_TIM3_IRQ);
 }
 
 static void rcc_clock_setup(void)
@@ -126,7 +119,7 @@ static void usart_setup(void)
   usart_set_baudrate(USART2, 115200);
   usart_set_databits(USART2, 8);
   usart_set_stopbits(USART2, USART_STOPBITS_1);
-  usart_set_mode(USART2, USART_MODE_TX);
+  usart_set_mode(USART2, USART_MODE_TX_RX);
   usart_set_parity(USART2, USART_PARITY_NONE);
   usart_set_flow_control(USART2, USART_FLOWCONTROL_NONE);
 
@@ -139,7 +132,6 @@ static void gpio_setup(void)
   /*** L6474 DIRECTION PINS for X-NUCLEO-IHM01A1 ***/
   gpio_mode_setup(GPIOA, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, GPIO8);
   gpio_mode_setup(GPIOB, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, GPIO5);
-  
   
   /*** L6474 STBY\\RESET pin ***/  
   gpio_mode_setup(GPIOA, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, GPIO9);
@@ -184,16 +176,17 @@ static void tim2_setup(void)
   timer_set_mode(TIM2, TIM_CR1_CKD_CK_INT,
                  TIM_CR1_CMS_EDGE, TIM_CR1_DIR_UP);
 
-  timer_set_prescaler(TIM2, 1);
+  timer_set_prescaler(TIM2, PRESCALER);
   timer_enable_preload(TIM2);
   
   timer_continuous_mode(TIM2);
 
-  timer_set_period(TIM2, MOTOR_START_PERIOD);
+  timer_set_period(TIM2, MOTOR_SPEED);
+  timer_set_oc_value(TIM2, TIM_OC2, MOTOR_SPEED >> 1);
+
   timer_set_oc_mode(TIM2, TIM_OC2, TIM_OCM_PWM1);
   timer_enable_oc_preload(TIM2, TIM_OC2);
   timer_enable_oc_output(TIM2, TIM_OC2);
-  timer_set_oc_value(TIM2, TIM_OC2, MOTOR_START_PERIOD >> 1);
     
   timer_set_counter(TIM2, 0x00000000);
   
@@ -208,53 +201,23 @@ static void tim2_setup(void)
   timer_generate_event(TIM2, TIM_EGR_UG);
 }
 
-void tim2_isr(void)
-{  
-  uint64_t next_period_eng;
-  uint32_t next_period;
-  
-  if (timer_get_flag(TIM2, TIM_SR_CC2IF)) {
-    timer_clear_flag(TIM2, TIM_SR_CC2IF);
-        
-    last_period_eng = TO_ENG(TIM2_ARR);
-    
-    if (last_period_eng > TO_ENG((uint64_t)m1_target_period)) {
-      
-      if (step_count == 1) {
-        next_period_eng = TO_ENG(4056 * (TO_COMP(last_period_eng)) / 1000);
-      } else {
-        next_period_eng = last_period_eng - 2 * last_period_eng / (4 * step_count + 1);        
-      }
-      
-      next_period = TO_COMP(next_period_eng);
-      
-      timer_set_period(TIM2, next_period);
-      timer_set_oc_value(TIM2, TIM_OC2, next_period >> 1);
-    }
-    
-    
-    step_count++;
-  }
-}
-
-
 static void tim3_setup(void)
 {
   timer_reset(TIM3);
   timer_set_mode(TIM3, TIM_CR1_CKD_CK_INT,
                  TIM_CR1_CMS_EDGE, TIM_CR1_DIR_UP);
 
-  timer_set_prescaler(TIM3, 96);
+  timer_set_prescaler(TIM3, PRESCALER);
   timer_enable_preload(TIM3);
   
   timer_continuous_mode(TIM3);
-
-  timer_set_period(TIM3, 600);
   
+  timer_set_period(TIM3, MOTOR_SPEED);
+  timer_set_oc_value(TIM3, TIM_OC2, MOTOR_SPEED >> 1);
+
   timer_set_oc_mode(TIM3, TIM_OC2, TIM_OCM_PWM1);
   timer_enable_oc_preload(TIM3, TIM_OC2);
   timer_enable_oc_output(TIM3, TIM_OC2);
-  timer_set_oc_value(TIM3, TIM_OC2, 600 >> 1);
 
   timer_set_counter(TIM3, 0x0000);
 
@@ -265,11 +228,41 @@ static void tim3_setup(void)
     the UG bit in the TIMx_EGR register.
 
    */
+  timer_enable_irq(TIM3, TIM_DIER_CC2IE);
   timer_generate_event(TIM3, TIM_EGR_UG);
 }
 
 
+void tim2_isr(void)
+{
+  if (timer_get_flag(TIM2, TIM_SR_CC2IF)) {
+    
+    timer_clear_flag(TIM2, TIM_SR_CC2IF);
+    
+    state.x_actual_steps++;
 
+    if (state.x_actual_steps >= state.x_goal_steps) {
+      state.axes_state &= ~(X_MOVING);
+      timer_disable_counter(TIM2);
+    }
+  }
+}
+
+
+void tim3_isr(void)
+{   
+  if (timer_get_flag(TIM3, TIM_SR_CC2IF)) {
+    
+    timer_clear_flag(TIM3, TIM_SR_CC2IF);
+    
+    state.y_actual_steps++;
+
+    if (state.y_actual_steps >= state.y_goal_steps) {
+      state.axes_state &= ~(Y_MOVING);
+      timer_disable_counter(TIM3);
+    }
+  }
+}
 
 
 static void spi_setup(void)
@@ -319,55 +312,138 @@ static void l6474_message(uint8_t *msg_tx, uint8_t *msg_rx, uint8_t msg_len)
 
 }
 
+static void usart2_send_msg(char *msg)
+{
+  while(*msg != '\0') {
+    usart_send_blocking(USART2, *msg);
+    msg++;
+  }
+}
 
 
 int main(void)
 {
+  uint8_t c;
+  
+  parser_error_t ret;
+  
+  initialize_parser_state(&state, 1000);
+  
   rcc_setup();
   nvic_setup();
   gpio_setup();
   usart_setup();
   spi_setup();
   tim2_setup();
-  tim3_setup();  
+  tim3_setup();
+  
 
   /* ------------------- TOP - BOT -- */
   
-  uint8_t message_get_param_step1[] = {0x36, 0x36};
+  uint8_t message_get_param_stepmode[] = {0x36, 0x36};
   uint8_t message_nop[] = {0x00, 0x00};
-  uint8_t message_set_param[] = {0x16, 0x16};
+  uint8_t message_set_param_stepmode[] = {0x16, 0x16}; // SET PARAM STEP_MODE
+  uint8_t message_enable_bridges[] = {0xB8, 0xB8};
 
-  uint8_t message1[] = {0xB8, 0x00};
+  uint8_t message_disable_bridges[] = {0xA8, 0xA8};
+  
+//  uint8_t message_get_param_tval[] = {0x29, 0x29}; // GET PARAM TVAL  
+  uint8_t message_set_param_tval[] = {0x09, 0x09}; // SET PARAM TVAL  
+
+//  uint8_t message_get_param_ocd_th[] = {0x33, 0x33}; // GET PARAM OCD_TH  
+  uint8_t message_set_param_ocd_th[] = {0x13, 0x13}; // SET PARAM OCD_TH  
+  
+  uint8_t message_get_config[] = {0x38, 0x38};
+  uint8_t message_set_config[] = {0x18, 0x18};
+  
+  
+  uint8_t message_config_hi[2];
+  uint8_t message_config_lo[2];
+  
+  
+  /* 
+   * TVAL FORMULA: 
+   * current_value_amps = 4 / 128 * (bits+1) = (bits+1) >> 5
+   * => bits = floor(current_value_amps << 5 - 1)
+   */ 
+  uint8_t tval = 0x10; // TVAL 0.59375 A
+  
+  /*
+   * OCD_TH FORMULA:
+   * overcurrent_value_amps = 6/16 * (bits + 1)
+   * => bits = floor(overcurrent_value_amps * 16 / 6 - 1)
+   */
+  uint8_t ocd_th = 0x01; // OCD_TH 0.750 A 
+  
+  
 
   uint8_t reply[2];
-  
+
+  // Enable the L6474
   gpio_set(GPIOA, GPIO9);
   
-  for (uint32_t i = 0; i < 100000; i++){
+  // Wait for L6474 to get its shit together 
+  for (uint32_t i = 0; i < 300000; i++){
     asm("nop");
   }
   
-  l6474_message(message_get_param_step1, NULL, 2);
+  l6474_message(message_disable_bridges, reply, 2);
+
+  reply[0] = tval; // (0x7F & reply[0]) | tval; // TVAL
+  reply[1] = tval; // (0x7F & reply[1]) | tval; // TVAL
+  
+  l6474_message(message_set_param_tval, NULL, 2);
+  l6474_message(reply, NULL, 2);
+
+  reply[0] = ocd_th; // (0x7F & reply[0]) | tval; // TVAL
+  reply[1] = ocd_th; // (0x7F & reply[1]) | tval; // TVAL
+
+  l6474_message(message_set_param_ocd_th, NULL, 2);
+  l6474_message(reply, NULL, 2);
+
+  l6474_message(message_nop, reply, 2);
+
+
+  l6474_message(message_get_config, NULL, 2);
+  l6474_message(message_nop, message_config_hi, 2);
+  l6474_message(message_nop, message_config_lo, 2);
+  
+  
+  message_config_lo[0] = (0x5F & message_config_lo[0]) | 0x80; // Set OC_SD = 1, TQREG = 0 
+  message_config_lo[0] = (0x5F & message_config_lo[0]) | 0x80;
+  
+  l6474_message(message_set_config, NULL, 2);
+  l6474_message(message_nop, message_config_hi, 2);
+  l6474_message(message_nop, message_config_lo, 2);
+  
+  
+  l6474_message(message_get_param_stepmode, NULL, 2);
   l6474_message(message_nop, reply, 2);
   
-  reply[0] = (0xF8 & reply[0]) | 0x0;
-  reply[1] = (0xF8 & reply[1]) | 0x2;
+  reply[0] = (0xF8 & reply[0]) | 0x4; // Step size selection
+  reply[1] = (0xF8 & reply[1]) | 0x4; // Step size selection
 
-  l6474_message(message_set_param, NULL, 2);
+  l6474_message(message_set_param_stepmode, NULL, 2);
   l6474_message(reply, NULL, 2);
   
-  
-  l6474_message(message1, reply, 2);
-  
+  l6474_message(message_enable_bridges, reply, 2);
 
-  m1_target_period = 60000;
-  step_count = 1;
-  timer_enable_counter(TIM2); // TOP
-  timer_enable_counter(TIM3); // BOT
-
-  
+  usart2_send_msg("Stages ready.");
+    
   while(1)
   {
-    __WFI();
+    usart2_send_msg("\r\n> ");
+    
+    do {
+      c = usart_recv_blocking(USART2);
+      
+      ret = feed_parser(&state, c);
+    } while (ret != WORKING);
+            
+    while (state.axes_state & (X_MOVING | Y_MOVING)) {
+      __WFI();
+    }
   }
 }
+
+

@@ -3,7 +3,10 @@
 */*.o
 */*.map
 
-*.pdf
 */*.bin
 */*.list
 */*.hex
+
+src/gcodeinterpreter.c
+src/*.pdf
+src/*.dot
