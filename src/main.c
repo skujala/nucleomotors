@@ -425,12 +425,12 @@ int main(void)
   }
   
   while (state.axes_state & (X_MOVING | Y_MOVING)) {
-    asm("nop");
+    __WFI();
   }
   
-  char hello2[] = "G00  X48000  Y24000 F8000\n";
+  char hello2[] = "G00  X48000  Y24000 F20000\n";
   
-  for (uint16_t i = 0; i < 26; i++) {
+  for (uint16_t i = 0; i < 27; i++) {
     feed_parser(&state, hello2[i]);
   }
   
