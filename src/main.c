@@ -312,6 +312,13 @@ static void l6474_message(uint8_t *msg_tx, uint8_t *msg_rx, uint8_t msg_len)
 
 }
 
+static void usart2_send_msg(char *msg)
+{
+  while(*msg != '\0') {
+    usart_send_blocking(USART2, *msg);
+    msg++;
+  }
+}
 
 
 int main(void)
@@ -420,13 +427,12 @@ int main(void)
   l6474_message(reply, NULL, 2);
   
   l6474_message(message_enable_bridges, reply, 2);
+
+  usart2_send_msg("Stages ready.");
     
   while(1)
   {
-    usart_send_blocking(USART2, '\n');    
-    usart_send_blocking(USART2, '\r');
-    usart_send_blocking(USART2, '>');
-    usart_send_blocking(USART2, ' ');
+    usart2_send_msg("\r\n> ");
     
     do {
       c = usart_recv_blocking(USART2);
@@ -439,3 +445,5 @@ int main(void)
     }
   }
 }
+
+
